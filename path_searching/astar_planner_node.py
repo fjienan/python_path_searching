@@ -219,23 +219,63 @@ class AStarPlannerNode(Node):
         # kfs=3（假的kfs）或kfs=1（r1的kfs，无覆盖时）视为障碍物
         return kfs_value == 3 or kfs_value == 1
     
+    def is_adjacent_to_r2kfs(self, row, col):
+        """
+        检查格子是否与r2kfs(kfs=2)相邻
+
+        Args:
+            row, col: grid坐标
+
+        Returns:
+            bool: True表示与r2kfs相邻
+        """
+        for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:  # 上下左右
+            adj_row = row + dr
+            adj_col = col + dc
+            if 0 <= adj_row < self.grid_rows and 0 <= adj_col < self.grid_cols:
+                if self.kfs_grid[adj_row, adj_col] == 2:
+                    return True
+        return False
+
+    def get_r2kfs_col_in_first_row(self):
+        """
+        检测第一行（row=0）是否存在 r2kfs（kfs_value=2），返回第一个找到的列索引
+
+        Returns:
+            int: 找到的 r2kfs 列索引，未找到返回 -1
+        """
+        if self.has_kfs_data:
+            # 遍历第一行的所有列
+            for col in range(self.grid_cols):
+                if self.kfs_grid[0, col] == 2:
+                    return col
+        return -1
+
     def get_cost(self, row, col):
         """
         获取移动到该格子的代价
-        
+
+        r2kfs收集策略：
+        - r2kfs(kfs=2)自身: cost = 1（可进入）
+        - r2kfs相邻格子: cost = 0.5（强烈吸引）
+        - r1kfs(kfs=1)非障碍物时: cost = 1
+        - 普通格子(kfs=0): cost = 1
+
         Args:
             row, col: grid坐标
-            
+
         Returns:
             float: 移动代价（障碍物返回inf）
         """
         if self.is_obstacle(row, col):
             return float('inf')
-        
+
         kfs_value = self.kfs_grid[row, col]
         if kfs_value == 2:  # r2的kfs
-            return 2.0
-        else:  # kfs=0，无kfs
+            return 1.0  # r2kfs自身可进入，cost=1
+        elif self.is_adjacent_to_r2kfs(row, col):
+            return 0.5  # r2kfs相邻格子，低代价吸引
+        else:  # kfs=0 或 kfs=1（非障碍物）
             return 1.0
     
     def heuristic(self, row1, col1, row2, col2):
@@ -363,10 +403,23 @@ class AStarPlannerNode(Node):
         # 从当前位置计算起点grid坐标
         add_new_start=False
         start_row, start_col = self.map_to_grid_coords(self.current_pos[0], self.current_pos[1])
-        if start_row==-1 and start_col==1:
-            add_new_start=True
-            start_row, start_col = 0,1
-        self.get_logger().info(f'Planning from current position: grid [{start_row}, {start_col}],currentpose[{self.current_pos[0],self.current_pos[1]}] to multiple goals')
+
+        # 检测是否在起始区域 (-1, col)
+        if start_row == -1:
+            # 首先检测第一行是否有 r2kfs
+            r2kfs_col = self.get_r2kfs_col_in_first_row()
+            if r2kfs_col != -1:
+                # 第一行有 r2kfs，从对应的列进入
+                add_new_start = True
+                start_row, start_col = 0, r2kfs_col
+                self.get_logger().info(f"Starting at (-1, {r2kfs_col}) due to r2kfs at (0, {r2kfs_col})")
+            elif start_col == 0:
+                # 无 r2kfs，从固定的 (-1, 0) 进入 (0, 0)
+                add_new_start = True
+                start_row, start_col = 0, 0
+                self.get_logger().info("Starting at (-1, 0) (no r2kfs in first row)")
+
+        self.get_logger().info(f'Planning from current position: grid [{start_row}, {start_col}], currentpose [{self.current_pos[0]}, {self.current_pos[1]}] to multiple goals')
         
         # 规划到所有目标点，选择cost最小的
         best_path = None
@@ -390,7 +443,16 @@ class AStarPlannerNode(Node):
             return None
         
         self.get_logger().info(f'Selected path to {best_goal} with cost={best_cost:.2f}, length={len(best_path)}')
-        return [(-1,1)]+best_path if add_new_start else best_path
+
+        # 根据是否有 r2kfs 返回不同的起始点
+        r2kfs_col = self.get_r2kfs_col_in_first_row()
+        if add_new_start:
+            if r2kfs_col != -1:
+                return [(-1, r2kfs_col)] + best_path
+            else:
+                return [(-1, 0)] + best_path
+        else:
+            return best_path
     
     def grid_to_map_coords(self, row, col):
         """
