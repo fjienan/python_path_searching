@@ -409,15 +409,15 @@ class AStarPlannerNode(Node):
             # 首先检测第一行是否有 r2kfs
             r2kfs_col = self.get_r2kfs_col_in_first_row()
             if r2kfs_col != -1:
-                # 第一行有 r2kfs，从对应的列进入
+                # 第一行有 r2kfs，从对应的列进入网格
                 add_new_start = True
                 start_row, start_col = 0, r2kfs_col
-                self.get_logger().info(f"Starting at (-1, {r2kfs_col}) due to r2kfs at (0, {r2kfs_col})")
-            elif start_col == 0:
-                # 无 r2kfs，从固定的 (-1, 0) 进入 (0, 0)
+                self.get_logger().info(f"Will enter grid at (0, {r2kfs_col}) due to r2kfs, starting from (-1, 0)")
+            else:
+                # 无 r2kfs，从 (0, 0) 进入网格
                 add_new_start = True
                 start_row, start_col = 0, 0
-                self.get_logger().info("Starting at (-1, 0) (no r2kfs in first row)")
+                self.get_logger().info("Will enter grid at (0, 0) (no r2kfs in first row), starting from (-1, 0)")
 
         self.get_logger().info(f'Planning from current position: grid [{start_row}, {start_col}], currentpose [{self.current_pos[0]}, {self.current_pos[1]}] to multiple goals')
         
@@ -444,12 +444,17 @@ class AStarPlannerNode(Node):
         
         self.get_logger().info(f'Selected path to {best_goal} with cost={best_cost:.2f}, length={len(best_path)}')
 
-        # 根据是否有 r2kfs 返回不同的起始点
+        # 机器人总是从 (-1, 0) 开始
         r2kfs_col = self.get_r2kfs_col_in_first_row()
         if add_new_start:
             if r2kfs_col != -1:
-                return [(-1, r2kfs_col)] + best_path
+                # 有 r2kfs 时：(-1, 0) -> (-1, col) -> (0, col)
+                start_path = [(-1, 0)]
+                if r2kfs_col != 0:  # 如果不是第0列，需要先从 (-1, 0) 移动到 (-1, col)
+                    start_path.append((-1, r2kfs_col))
+                return start_path + best_path
             else:
+                # 无 r2kfs 时：(-1, 0) -> (0, 0)
                 return [(-1, 0)] + best_path
         else:
             return best_path
