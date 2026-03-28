@@ -255,12 +255,6 @@ class AStarPlannerNode(Node):
         """
         获取移动到该格子的代价
 
-        r2kfs收集策略：
-        - r2kfs(kfs=2)自身: cost = 1（可进入）
-        - r2kfs相邻格子: cost = 0.5（强烈吸引）
-        - r1kfs(kfs=1)非障碍物时: cost = 1
-        - 普通格子(kfs=0): cost = 1
-
         Args:
             row, col: grid坐标
 
@@ -272,10 +266,8 @@ class AStarPlannerNode(Node):
 
         kfs_value = self.kfs_grid[row, col]
         if kfs_value == 2:  # r2的kfs
-            return 1.0  # r2kfs自身可进入，cost=1
-        elif self.is_adjacent_to_r2kfs(row, col):
-            return 0.5  # r2kfs相邻格子，低代价吸引
-        else:  # kfs=0 或 kfs=1（非障碍物）
+            return 0.0  # r2kfs权重为0，最佳
+        else:  # kfs=0，无kfs
             return 1.0
     
     def heuristic(self, row1, col1, row2, col2):
@@ -403,23 +395,22 @@ class AStarPlannerNode(Node):
         # 从当前位置计算起点grid坐标
         add_new_start=False
         start_row, start_col = self.map_to_grid_coords(self.current_pos[0], self.current_pos[1])
-
-        # 检测是否在起始区域 (-1, col)
-        if start_row == -1:
-            # 首先检测第一行是否有 r2kfs
+        if start_row==-1 and start_col==1:
+            add_new_start=True
+            start_row, start_col = 0,1
+        elif start_row==-1:  # 如果在 (-1, *) 其他位置
+            # 检测是否有 r2kfs
             r2kfs_col = self.get_r2kfs_col_in_first_row()
             if r2kfs_col != -1:
-                # 第一行有 r2kfs，从对应的列进入网格
-                add_new_start = True
+                add_new_start=True
                 start_row, start_col = 0, r2kfs_col
-                self.get_logger().info(f"Will enter grid at (0, {r2kfs_col}) due to r2kfs, starting from (-1, 0)")
-            else:
-                # 无 r2kfs，从 (0, 0) 进入网格
-                add_new_start = True
-                start_row, start_col = 0, 0
-                self.get_logger().info("Will enter grid at (0, 0) (no r2kfs in first row), starting from (-1, 0)")
+                self.get_logger().info(f"Starting at (-1, {start_col}) and entering grid at (0, {r2kfs_col}) due to r2kfs")
+            elif start_col == 0:  # 如果在 (-1, 0) 且无 r2kfs
+                add_new_start=True
+                start_row, start_col = 0,0
+                self.get_logger().info("Starting at (-1, 0) and entering grid at (0, 0) (no r2kfs in first row)")
 
-        self.get_logger().info(f'Planning from current position: grid [{start_row}, {start_col}], currentpose [{self.current_pos[0]}, {self.current_pos[1]}] to multiple goals')
+        self.get_logger().info(f'Planning from current position: grid [{start_row}, {start_col}],currentpose[{self.current_pos[0],self.current_pos[1]}] to multiple goals')
         
         # 规划到所有目标点，选择cost最小的
         best_path = None
@@ -441,21 +432,23 @@ class AStarPlannerNode(Node):
         if best_path is None:
             self.get_logger().warn('No path found to any goal!')
             return None
-        
+
         self.get_logger().info(f'Selected path to {best_goal} with cost={best_cost:.2f}, length={len(best_path)}')
 
-        # 机器人总是从 (-1, 0) 开始
         r2kfs_col = self.get_r2kfs_col_in_first_row()
         if add_new_start:
             if r2kfs_col != -1:
-                # 有 r2kfs 时：(-1, 0) -> (-1, col) -> (0, col)
-                start_path = [(-1, 0)]
-                if r2kfs_col != 0:  # 如果不是第0列，需要先从 (-1, 0) 移动到 (-1, col)
-                    start_path.append((-1, r2kfs_col))
-                return start_path + best_path
-            else:
-                # 无 r2kfs 时：(-1, 0) -> (0, 0)
+                # 直接构造路径：先从 (-1, col) 到 (0, col)，然后再继续原路径
+                full_path = [(-1, r2kfs_col), (0, r2kfs_col)]
+                # 添加后续路径，但跳过可能重复的 (0, r2kfs_col)
+                for point in best_path:
+                    if point != (0, r2kfs_col):
+                        full_path.append(point)
+                return full_path
+            elif start_col == 0:
                 return [(-1, 0)] + best_path
+            else:
+                return [(-1, 1)] + best_path
         else:
             return best_path
     

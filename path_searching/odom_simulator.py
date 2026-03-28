@@ -33,13 +33,13 @@ class OdomSimulator(Node):
         # Map2配置（用于坐标转换）
         map2_origin = [3.2, 1.2, 0.0]  # [x, y, theta]
         grid_resolution = 1.2  # 米/单元格
-        
-        # 起始点：grid坐标[0][1]转换为map坐标
+
+        # 起始点：grid坐标[-1][0]转换为map坐标，与路径规划逻辑一致
         start_row = -1
-        start_col = 1
+        start_col = 0
         start_x = map2_origin[0] + start_row * grid_resolution + 0.5 * grid_resolution
         start_y = map2_origin[1] + start_col * grid_resolution + 0.5 * grid_resolution
-        
+
         self._pose_x = start_x
         self._pose_y = start_y
         self._pose_z = 0.0
@@ -74,7 +74,7 @@ class OdomSimulator(Node):
             f'Publishing TF transform: {self._odom_frame} -> {self._base_frame}'
         )
         self.get_logger().info(
-            f'Initial position: [{self._pose_x:.2f}, {self._pose_y:.2f}] (grid [0][1])'
+            f'Initial position: [{self._pose_x:.2f}, {self._pose_y:.2f}] (grid [-1][0])'
         )
 
     def _cmd_callback(self, msg: Twist) -> None:
