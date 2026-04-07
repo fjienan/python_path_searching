@@ -78,9 +78,9 @@ class OmnidirectionalTrackerNode(Node):
         self.current_vel_y = 0.0
         self.current_vel_yaw = 0.0
 
-        # 梯形速度规划参数
-        self.trape_accel_distance = 1.2  # 加速距离
-        self.trap_decel_distance = 1.2  # 减速距离
+        # 梯形速度规划参数（格子间距1.2米）
+        self.trape_accel_distance = 0.4  # 加速距离（前1/3）
+        self.trap_decel_distance = 0.4  # 减速距离（后1/3）
         self.trap_max_vel = 0.3  # 梯形最大速度
         self.trap_max_accel = 1.0  # 梯形最大加速度
 
