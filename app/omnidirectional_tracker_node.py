@@ -21,6 +21,8 @@ import numpy as np
 import json
 from math import floor
 
+from core.pid_controller import PIDController
+from core.transform_utils import euler_from_quaternion
 
 class OmnidirectionalTrackerNode(Node):
     """全向轮路径跟踪节点"""
@@ -66,12 +68,9 @@ class OmnidirectionalTrackerNode(Node):
         self.current_yaw = 0.0
 
         # PID控制状态
-        self.integral_error_x = 0.0
-        self.integral_error_y = 0.0
-        self.integral_error_yaw = 0.0
-        self.last_error_x = 0.0
-        self.last_error_y = 0.0
-        self.last_error_yaw = 0.0
+        self.pid_x = PIDController(kp=1.0, ki=0.0, kd=0.1, output_limit=self.trap_max_vel)
+        self.pid_y = PIDController(kp=1.0, ki=0.0, kd=0.1, output_limit=self.trap_max_vel)
+        self.pid_yaw = PIDController(kp=1.0, ki=0.0, kd=0.1, output_limit=self.trap_max_vel)
 
         # 当前速度（用于平滑减速）
         self.current_vel_x = 0.0
@@ -199,18 +198,14 @@ class OmnidirectionalTrackerNode(Node):
         self.get_logger().info(f'Received path with {len(msg.poses)} points')
 
     def odom_callback(self, msg):
-        """处理里程计消息"""
+        """里程计回调函数"""
+        # 更新当前位姿
         self.current_pos[0] = msg.pose.pose.position.x
-        self.current_pos[1] = msg.pose.position.y
+        self.current_pos[1] = msg.pose.pose.position.y
         self.current_pos[2] = msg.pose.pose.position.z
 
-        # 从四元数提取yaw角
-        qx = msg.pose.orientation.x
-        qy = msg.pose.orientation.y
-        qz = msg.pose.orientation.z
-        qw = msg.pose.orientation.w
-
-        self.current_yaw = math.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
+        # 从四元数计算偏航角
+        _, _, self.current_yaw = euler_from_quaternion(msg.pose.pose.orientation)
 
         self.have_odom = True
 

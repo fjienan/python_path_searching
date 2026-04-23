@@ -3,15 +3,14 @@
 import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import Path, Odometry
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import PoseStamped, Twist
 import math
 import numpy as np
 
+from core.pid_controller import PIDController
 
 class PurePursuitNode(Node):
-    """
-    Pure Pursuit路径跟踪节点，订阅path和odom_world，发布cmd_vel
-    """
+    """纯跟踪(Pure Pursuit)节点"""
     
     def __init__(self):
         super().__init__('pure_pursuit')
@@ -41,8 +40,7 @@ class PurePursuitNode(Node):
         self.kp = 1.0
         self.ki = 0.0
         self.kd = 0.1
-        self.integral_error = 0.0
-        self.last_error = 0.0
+        self.pid = PIDController(self.kp, self.ki, self.kd, output_limit=1.0)
         
         # 创建订阅者
         self.path_sub = self.create_subscription(
@@ -293,14 +291,7 @@ class PurePursuitNode(Node):
         
         # PID控制
         dt = 1.0 / self.control_frequency
-        self.integral_error += lateral_error * dt
-        derivative_error = (lateral_error - self.last_error) / dt
-        self.last_error = lateral_error
-        
-        # 限制积分饱和
-        self.integral_error = max(-1.0, min(1.0, self.integral_error))
-        
-        pid_output = self.kp * lateral_error + self.ki * self.integral_error + self.kd * derivative_error
+        pid_output = self.pid.compute(lateral_error, dt)
         
         # 应用到角速度
         angular_vel += pid_output

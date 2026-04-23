@@ -6,19 +6,27 @@ find_package(ament_cmake REQUIRED)
 install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
 
 install(PROGRAMS
-  path_searching/astar_planner_node.py
+  app/astar_planner_node.py
   DESTINATION lib/${PROJECT_NAME})
 
 install(PROGRAMS
-  path_searching/omnidirectional_tracker_node.py
+  app/omnidirectional_tracker_node.py
   DESTINATION lib/${PROJECT_NAME})
 
 install(PROGRAMS
-  path_searching/pure_pursuit_node.py
+  app/pure_pursuit_node.py
   DESTINATION lib/${PROJECT_NAME})
 
 install(PROGRAMS
-  path_searching/odom_simulator.py
+  app/odom_simulator.py
+  DESTINATION lib/${PROJECT_NAME})
+
+install(PROGRAMS
+  app/path_decision_node.py
+  DESTINATION lib/${PROJECT_NAME})
+
+install(DIRECTORY
+  core
   DESTINATION lib/${PROJECT_NAME})
 
 if(BUILD_TESTING)
