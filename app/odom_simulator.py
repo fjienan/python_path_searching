@@ -21,24 +21,29 @@ class OdomSimulator(Node):
         self.declare_parameter('odom_frame', 'map')
         self.declare_parameter('base_frame', 'base_link')
         self.declare_parameter('publish_rate', 50.0)
+        self.declare_parameter('motion_type', 'omnidirectional')
+        self.declare_parameter('grid.map_origin', [3.2, 1.2, 0.0])
+        self.declare_parameter('grid.grid_resolution', 1.2)
+        self.declare_parameter('grid.start_row', -1)
+        self.declare_parameter('grid.start_col', 0)
 
         odom_frame = self.get_parameter('odom_frame').get_parameter_value().string_value
         base_frame = self.get_parameter('base_frame').get_parameter_value().string_value
         publish_rate = max(1.0, self.get_parameter('publish_rate').value)
+        motion_type = self.get_parameter('motion_type').get_parameter_value().string_value
 
         self._odom_frame = odom_frame or 'odom'
         self._base_frame = base_frame or 'base_link'
+        self._motion_type = motion_type or 'omnidirectional'
         self._dt = 1.0 / publish_rate
 
-        # Map2配置（用于坐标转换）
-        map2_origin = [3.2, 1.2, 0.0]  # [x, y, theta]
-        grid_resolution = 1.2  # 米/单元格
+        map_origin_raw = self.get_parameter('grid.map_origin').value
+        grid_resolution = self.get_parameter('grid.grid_resolution').value
+        start_row = self.get_parameter('grid.start_row').value
+        start_col = self.get_parameter('grid.start_col').value
 
-        # 起始点：grid坐标[-1][0]转换为map坐标，与路径规划逻辑一致
-        start_row = -1
-        start_col = 0
-        start_x = map2_origin[0] + start_row * grid_resolution + 0.5 * grid_resolution
-        start_y = map2_origin[1] + start_col * grid_resolution + 0.5 * grid_resolution
+        start_x = map_origin_raw[0] + start_row * grid_resolution + 0.5 * grid_resolution
+        start_y = map_origin_raw[1] + start_col * grid_resolution + 0.5 * grid_resolution
 
         self._pose_x = start_x
         self._pose_y = start_y
@@ -68,7 +73,7 @@ class OdomSimulator(Node):
         self.create_timer(self._dt, self._publish_odometry)
 
         self.get_logger().info(
-            f'Odom simulator started. Publishing {publish_rate:.1f} Hz on /odom_world'
+            f'Odom simulator started. Publishing {publish_rate:.1f} Hz on /odom_world, motion_type={self._motion_type}'
         )
         self.get_logger().info(
             f'Publishing TF transform: {self._odom_frame} -> {self._base_frame}'
@@ -116,12 +121,18 @@ class OdomSimulator(Node):
             return
 
         dt = self._dt
-        # cmd_vel contains global frame velocities (matching Fast-Planner's PositionCommand)
-        vx_global = self._vel_cmd.linear.x  # Global X velocity
-        vy_global = self._vel_cmd.linear.y  # Global Y velocity
-        wz = self._vel_cmd.angular.z        # Angular velocity (yaw rate)
 
-        # Directly integrate global velocities to update global position
+        if self._motion_type == 'omnidirectional':
+            vx_global = self._vel_cmd.linear.x
+            vy_global = self._vel_cmd.linear.y
+        else:
+            forward_vel = self._vel_cmd.linear.x
+            yaw = self._yaw
+            vx_global = forward_vel * math.cos(yaw)
+            vy_global = forward_vel * math.sin(yaw)
+
+        wz = self._vel_cmd.angular.z
+
         self._pose_x += vx_global * dt
         self._pose_y += vy_global * dt
         # 平面机器人：固定Z坐标为0

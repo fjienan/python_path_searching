@@ -1,0 +1,84 @@
+# ============================================================
+# 轨迹跟踪参数配置文件
+# ============================================================
+# motion_type: omnidirectional (全向轮) / unidirectional (只能向前)
+#
+# 状态机流程：
+#   unidirectional: TURN → HOLD → MOVE → TURN → ...
+#                   - TURN : 转到目标角度（can_go 不影响）
+#                   - HOLD : 停在关键点，等 can_go=True 才继续
+#                   - MOVE : 前进到目标点，偏离角度则切回 TURN
+#   omnidirectional: MOVE → HOLD → MOVE → ...
+#                   - MOVE : X/Y/Yaw 独立 PID 控制
+#                   - HOLD : 停在关键点，等 can_go=True 才继续
+# ============================================================
+
+# ============================================================
+# 公共参数配置（所有节点共享）
+# ============================================================
+# 场地坐标系原点（世界坐标系原点在 grid 左下角的位置）
+# map_origin: [x, y, yaw]，x/y 是 grid (0,0) 左下角的世界坐标，yaw 是场地旋转角
+#
+# Grid 尺寸与物理尺寸：
+#   - grid_rows / grid_cols: 场地格子行列数
+#   - grid_resolution: 每个格子的物理边长（米）
+#
+# 机器人初始位置（grid 坐标）：
+#   - start_row = -1 表示机器人在场地正前方一排（grid 外），row=0 是入口
+#   - start_col: 初始列（0~grid_cols-1）
+#
+# 目标格子：GOAL_GRIDS，机器人在走完路径后需要到达的区域
+# ============================================================
+
+grid:
+  ros__parameters:
+    map_origin: [3.2, 1.2, 0.0]             # 场地坐标系原点 (x, y, yaw)
+    grid_rows: 4                          # 格子行数
+    grid_cols: 3                          # 格子列数
+    grid_resolution: 1.2                  # 每格物理尺寸 (m)
+    start_row: -1                         # 机器人初始行（-1=场地前方）
+    start_col: 0                          # 机器人初始列
+    goal_grid_0: [3, 0]                  # 目标格子 0
+    goal_grid_1: [3, 1]                  # 目标格子 1
+    goal_grid_2: [3, 2]                  # 目标格子 2
+
+tracker:
+  ros__parameters:
+    # --- 通用 ---
+    motion_type: 'omnidirectional'       # 运动模式：'omnidirectional' 或 'unidirectional'
+    control_frequency: 50.0            # 控制频率 (Hz)
+    arrive_threshold: 0.00             # 到达目标点的距离阈值 (m)
+    angle_threshold: 0.00             # 角度对齐阈值 (rad)，约 4.6°
+
+    # --- 全向模式 PID 参数 (motion_type=omnidirectional) ---
+    kp_x: 3.0
+    ki_x: 0.1
+    kd_x: 0.2
+    max_vel_x: 0.5
+    kp_y: 3.0
+    ki_y: 0.1
+    kd_y: 0.2
+    max_vel_y: 0.5
+    kp_yaw: 5.0
+    ki_yaw: 0.1
+    kd_yaw: 0.3
+    max_vel_yaw: 2.0
+
+    # --- 单向模式 PID 参数 (motion_type=unidirectional) ---
+    kp_angle: 4.0
+    ki_angle: 0.2
+    kd_angle: 0.2
+    max_angular: 2.0
+    kp_dist: 2.5
+    ki_dist: 0.2
+    kd_dist: 0.1
+    max_vel_forward: 0.5
+
+odom_simulator:
+  ros__parameters:
+    # grid 参数由 grid.* 共享（见上方）
+    motion_type: 'omnidirectional'      # 必须与 tracker.motion_type 保持一致
+    odom_frame: 'map'
+    base_frame: 'base_link'
+    publish_rate: 50.0
+    # 起始位置（来自 grid.start_row / grid.start_col，自动计算）
