@@ -29,6 +29,12 @@ class OdomSimulator(Node):
 
         self.declare_parameter('topics.cmd_vel', '/cmd_vel')
         self.declare_parameter('topics.odom_world', '/odom_world')
+        self.declare_parameter('topics.real_odom', '/Odometry')
+
+        # 真实里程计切换
+        self.declare_parameter('use_real_odom', False)
+        self.declare_parameter('real_odom_topic', '/Odometry')
+        self.declare_parameter('real_odom_frame', 'odom')
 
         odom_frame = self.get_parameter('odom_frame').get_parameter_value().string_value
         base_frame = self.get_parameter('base_frame').get_parameter_value().string_value
@@ -39,6 +45,10 @@ class OdomSimulator(Node):
         self._base_frame = base_frame or 'base_link'
         self._motion_type = motion_type or 'omnidirectional'
         self._dt = 1.0 / publish_rate
+
+        self._use_real_odom = self.get_parameter('use_real_odom').value
+        self._real_odom_topic = self.get_parameter('topics.real_odom').value
+        self._real_odom_frame = self.get_parameter('real_odom_frame').value
 
         map_origin_raw = self.get_parameter('grid.map_origin').value
         grid_resolution = self.get_parameter('grid.grid_resolution').value
@@ -72,8 +82,17 @@ class OdomSimulator(Node):
         
         # TF broadcaster for odom->base_link transform
         self._tf_broadcaster = TransformBroadcaster(self)
-        
-        self.create_timer(self._dt, self._publish_odometry)
+
+        if self._use_real_odom:
+            self._real_odom_sub = self.create_subscription(
+                Odometry, self._real_odom_topic, self._real_odom_callback, 10
+            )
+            self.get_logger().info(
+                f'Running in REAL ODOM mode, forwarding from {self._real_odom_topic} '
+                f'(frame_id={self._real_odom_frame}) to /odom_world'
+            )
+        else:
+            self.create_timer(self._dt, self._publish_odometry)
 
         self.get_logger().info(
             f'Odom simulator started. Publishing {publish_rate:.1f} Hz on /odom_world, motion_type={self._motion_type}'
@@ -87,6 +106,25 @@ class OdomSimulator(Node):
 
     def _cmd_callback(self, msg: Twist) -> None:
         self._vel_cmd = msg
+
+    def _real_odom_callback(self, msg: Odometry) -> None:
+        """将真实里程计消息直接转发到 /odom_world，frame 保持不变"""
+        out = Odometry()
+        out.header = msg.header
+        out.child_frame_id = self._base_frame
+        out.pose = msg.pose
+        out.twist = msg.twist
+        self._odom_pub.publish(out)
+
+        t = TransformStamped()
+        t.header.stamp = self.get_clock().now().to_msg()
+        t.header.frame_id = msg.header.frame_id
+        t.child_frame_id = self._base_frame
+        t.transform.translation.x = msg.pose.pose.position.x
+        t.transform.translation.y = msg.pose.pose.position.y
+        t.transform.translation.z = msg.pose.pose.position.z
+        t.transform.rotation = msg.pose.pose.orientation
+        self._tf_broadcaster.sendTransform(t)
 
     def _initial_pose_callback(self, msg: PoseWithCovarianceStamped) -> None:
         pose = msg.pose.pose

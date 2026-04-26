@@ -81,7 +81,16 @@ odom_simulator:
     odom_frame: 'map'
     base_frame: 'base_link'
     publish_rate: 50.0
+
+    # --- 切换到真实里程计时的配置 ---
+    # use_real_odom: 设为 true 时，订阅真实 odom topic，不再自己积分发布
+    use_real_odom: false
+    # 真实里程计的 topic 名称（当 use_real_odom=true 时使用，定义在 topics.* 下）
+    real_odom_topic: '/Odometry'
+    # 真实 odom 的 header.frame_id（用于校验/重映射，可选）
+    real_odom_frame: 'odom'
     # 起始位置（来自 grid.start_row / grid.start_col，自动计算）
+    # 仅在 use_real_odom=true 且需要初始化时使用
 
 # ============================================================
 # Topic 名称配置（方便调试时快速切换）
