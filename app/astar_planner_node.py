@@ -78,8 +78,14 @@ class AStarPlannerNode(Node):
         self.kfs_grid = np.zeros((self.GRID_ROWS, self.GRID_COLS), dtype=int)
         self.direction_override = None
 
-        self.max_r2kfs_count = 2
+        self.max_r2kfs_count = self.declare_parameter('max_r2kfs_count', 2).value
         self.allowed_r2kfs_positions = set()
+
+        kfs_topic = self.declare_parameter('topics.kfs_grid_data', '/kfs_grid_data').value
+        odom_topic = self.declare_parameter('topics.odom_world', '/odom_world').value
+        trigger_topic = self.declare_parameter('topics.planning_trigger', '/task/trigger').value
+        direction_topic = self.declare_parameter('topics.planning_direction', '/planning/direction').value
+        path_topic = self.declare_parameter('topics.planning_path', '/planning/path').value
 
         qos_profile = QoSProfile(
             reliability=QoSReliabilityPolicy.RELIABLE,
@@ -89,16 +95,16 @@ class AStarPlannerNode(Node):
         )
 
         self.kfs_data_sub = self.create_subscription(
-            String, '/kfs_grid_data', self.kfs_data_callback, qos_profile
+            String, kfs_topic, self.kfs_data_callback, qos_profile
         )
         self.odom_sub = self.create_subscription(
-            Odometry, '/odom_world', self.odom_callback, 10
+            Odometry, odom_topic, self.odom_callback, 10
         )
         self.trigger_sub = self.create_subscription(
-            String, '/task/trigger', self.trigger_callback, 10
+            String, trigger_topic, self.trigger_callback, 10
         )
         self.direction_sub = self.create_subscription(
-            String, '/planning/direction', self.direction_callback, 10
+            String, direction_topic, self.direction_callback, 10
         )
 
         path_qos = QoSProfile(
@@ -107,7 +113,7 @@ class AStarPlannerNode(Node):
             depth=1,
             durability=QoSDurabilityPolicy.TRANSIENT_LOCAL
         )
-        self.path_pub = self.create_publisher(Path, '/planning/path', path_qos)
+        self.path_pub = self.create_publisher(Path, path_topic, path_qos)
 
         self.planning_timer = self.create_timer(0.1, self.check_and_plan)
 

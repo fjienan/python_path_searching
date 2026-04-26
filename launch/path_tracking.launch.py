@@ -35,17 +35,17 @@ def generate_launch_description():
         parameters=[]
     )
 
-    path_decision_node = Node(
-        package=pkg_name,
-        executable='path_decision_node',
-        name='path_decision',
-        output='screen',
-        parameters=[]
-    )
+    # path_decision_node = Node(
+    #     package=pkg_name,
+    #     executable='path_decision_node',
+    #     name='path_decision',
+    #     output='screen',
+    #     parameters=[]
+    # )
 
     return LaunchDescription([
         astar_planner_node,
         tracker_node,
-        path_decision_node,
+        # path_decision_node,
         odom_simulator_node,
     ])

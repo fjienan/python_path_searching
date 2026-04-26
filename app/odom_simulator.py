@@ -27,6 +27,9 @@ class OdomSimulator(Node):
         self.declare_parameter('grid.start_row', -1)
         self.declare_parameter('grid.start_col', 0)
 
+        self.declare_parameter('topics.cmd_vel', '/cmd_vel')
+        self.declare_parameter('topics.odom_world', '/odom_world')
+
         odom_frame = self.get_parameter('odom_frame').get_parameter_value().string_value
         base_frame = self.get_parameter('base_frame').get_parameter_value().string_value
         publish_rate = max(1.0, self.get_parameter('publish_rate').value)
@@ -55,7 +58,7 @@ class OdomSimulator(Node):
         self._last_update: Optional[Time] = None
 
         self._cmd_sub = self.create_subscription(
-            Twist, '/cmd_vel', self._cmd_callback, 10
+            Twist, self.get_parameter('topics.cmd_vel').value, self._cmd_callback, 10
         )
         self._initial_pose_sub = self.create_subscription(
             PoseWithCovarianceStamped,
@@ -64,7 +67,7 @@ class OdomSimulator(Node):
             10,
         )
         self._odom_pub = self.create_publisher(
-            Odometry, '/odom_world', 10
+            Odometry, self.get_parameter('topics.odom_world').value, 10
         )
         
         # TF broadcaster for odom->base_link transform

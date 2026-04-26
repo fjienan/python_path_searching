@@ -18,7 +18,7 @@ import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import Path, Odometry
 from geometry_msgs.msg import Twist
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, Int32, Float32
 from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSHistoryPolicy, QoSReliabilityPolicy
 import math
 import numpy as np
@@ -37,6 +37,13 @@ class TrackerNode(Node):
         self.declare_parameter('motion_type', 'unidirectional')
         self.declare_parameter('control_frequency', 50.0)
         self.declare_parameter('arrive_threshold', 0.12)
+
+        self.declare_parameter('topics.planning_path', '/planning/path')
+        self.declare_parameter('topics.odom_world', '/odom_world')
+        self.declare_parameter('topics.can_go', '/can_go')
+        self.declare_parameter('topics.cmd_vel', '/cmd_vel')
+        self.declare_parameter('topics.tracker_direction', '/direction')
+        self.declare_parameter('topics.target_yaw_deg', '/target_yaw_deg')
 
         self.declare_parameter('kp_x', 3.0)
         self.declare_parameter('ki_x', 0.0)
@@ -75,10 +82,10 @@ class TrackerNode(Node):
         self.target_yaw = 0.0
         self.have_path = False
         self.have_odom = False
-        self.can_go = True
-        self.prev_can_go = True
+        self.can_go = False
+        self.prev_can_go = False
 
-        self.state = self.TURN if self.motion_type == 'unidirectional' else self.MOVE
+        self.state = self.TURN
         self.state_switched = False
 
         self._init_pids()
@@ -87,8 +94,9 @@ class TrackerNode(Node):
 
         self.control_timer = self.create_timer(1.0 / self.control_frequency, self._control_callback)
 
-    def _p(self, name):
-        return self.get_parameter(name).value
+    def _p(self, name, default=None):
+        val = self.get_parameter(name).value
+        return val if val is not None else default
 
     def _init_pids(self):
         if self.motion_type == 'omnidirectional':
@@ -121,12 +129,20 @@ class TrackerNode(Node):
             depth=1,
             durability=QoSDurabilityPolicy.TRANSIENT_LOCAL
         )
-        self.path_sub = self.create_subscription(Path, '/planning/path', self._path_callback, qos)
-        self.odom_sub = self.create_subscription(Odometry, '/odom_world', self._odom_callback, 10)
-        self.can_go_sub = self.create_subscription(Bool, '/can_go', self._can_go_callback, 10)
+        path_topic = self._p('topics.planning_path', '/planning/path')
+        odom_topic = self._p('topics.odom_world', '/odom_world')
+        can_go_topic = self._p('topics.can_go', '/can_go')
+        self.path_sub = self.create_subscription(Path, path_topic, self._path_callback, qos)
+        self.odom_sub = self.create_subscription(Odometry, odom_topic, self._odom_callback, 10)
+        self.can_go_sub = self.create_subscription(Bool, can_go_topic, self._can_go_callback, 10)
 
     def _init_publishers(self):
-        self.cmd_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+        cmd_topic = self._p('topics.cmd_vel', '/cmd_vel')
+        self.cmd_pub = self.create_publisher(Twist, cmd_topic, 10)
+        dir_topic = self._p('topics.tracker_direction', '/direction')
+        yaw_topic = self._p('topics.target_yaw_deg', '/target_yaw_deg')
+        self.dir_pub = self.create_publisher(Int32, dir_topic, 10)
+        self.yaw_pub = self.create_publisher(Float32, yaw_topic, 10)
 
     def _path_callback(self, msg):
         if len(msg.poses) == 0:
@@ -157,6 +173,8 @@ class TrackerNode(Node):
         self.state = self.TURN
         self._reset_pids()
         self._read_target_yaw()
+        self._publish_direction()
+        self.yaw_pub.publish(Float32(data=math.degrees(self.target_yaw)))
         self.get_logger().info(f'Received path with {len(msg.poses)} points')
 
     def _odom_callback(self, msg):
@@ -169,6 +187,10 @@ class TrackerNode(Node):
     def _can_go_callback(self, msg):
         self.prev_can_go = self.can_go
         self.can_go = msg.data
+
+    def _was_can_go_just_disabled(self):
+        """检测 can_go 是否刚刚从 True 变为 False（即本帧从允许变为禁止）"""
+        return self.prev_can_go and not self.can_go
 
     def _read_target_yaw(self):
         if self.current_path is None or self.current_target_index >= len(self.current_path.poses):
@@ -204,6 +226,19 @@ class TrackerNode(Node):
             self.pid_angle.reset()
             self.pid_dist.reset()
 
+    def _publish_direction(self):
+        """在设置新目标yaw时立即发布转向方向（左转-1/直走0/右转1）"""
+        diff = self._normalize_angle(self.target_yaw - self.current_yaw)
+        diff_deg = math.degrees(diff)
+        if diff_deg > 2.0:
+            direction = -1
+        elif diff_deg < -2.0:
+            direction = 1
+        else:
+            direction = 0
+        self.dir_pub.publish(Int32(data=direction))
+        self.get_logger().info(f'PUBLISH direction={direction} target_yaw_deg={math.degrees(self.target_yaw):.2f} diff={diff_deg:.2f}')
+
     def _normalize_angle(self, angle):
         while angle > math.pi:
             angle -= 2.0 * math.pi
@@ -224,7 +259,9 @@ class TrackerNode(Node):
 
     def _move_to_next_target(self):
         self.current_target_index += 1
-        self.get_logger().info(f'_move_to_next_target: new_idx={self.current_target_index} total={len(self.current_path.poses)}')
+        self.can_go = False
+        self.prev_can_go = False
+        self.get_logger().info(f'_move_to_next_target: new_idx={self.current_target_index} total={len(self.current_path.poses)}, waiting for can_go')
         if self.current_target_index >= len(self.current_path.poses):
             self.get_logger().info('All targets reached, stopping')
             return False
@@ -234,6 +271,8 @@ class TrackerNode(Node):
         )
         self._reset_pids()
         self.state = self.TURN
+        self._publish_direction()  # 立即发布转向方向
+        self.yaw_pub.publish(Float32(data=math.degrees(self.target_yaw)))
         return True
 
     def _control_callback(self):
@@ -261,10 +300,14 @@ class TrackerNode(Node):
             angular_vel = max(-self._p('max_angular'), min(self._p('max_angular'), angular_vel))
             if abs(angular_vel) < 0.05:
                 self.state = self.HOLD
+                self.can_go = False
+                self.prev_can_go = False
                 self._reset_pids()
                 self.get_logger().info('Angle aligned, entering HOLD')
+                return
             else:
                 self._publish_cmd(0.0, 0.0, angular_vel)
+                return
 
         elif self.state == self.HOLD:
             self._stop()
@@ -275,11 +318,6 @@ class TrackerNode(Node):
                 self.get_logger().info('can_go=True, entering MOVE')
 
         elif self.state == self.MOVE:
-            if not self.can_go and not self.prev_can_go:
-                self._stop()
-                self.get_logger().info('MOVE: can_go=False, stopped')
-                return
-
             skip_arrival_check = self._move_first_iteration
             self._move_first_iteration = False
 
@@ -327,10 +365,14 @@ class TrackerNode(Node):
             vyaw = max(-self._p('max_vel_yaw'), min(self._p('max_vel_yaw'), vyaw))
             if abs(vyaw) < 0.05:
                 self.state = self.HOLD
+                self.can_go = False
+                self.prev_can_go = False
                 self._reset_pids()
                 self.get_logger().info('Angle aligned, entering HOLD')
+                return
             else:
                 self._publish_cmd(0.0, 0.0, vyaw)
+                return
 
         elif self.state == self.HOLD:
             self._stop()
@@ -341,11 +383,6 @@ class TrackerNode(Node):
                 self.get_logger().info('can_go=True, entering MOVE')
 
         elif self.state == self.MOVE:
-            if not self.can_go and not self.prev_can_go:
-                self._stop()
-                self.get_logger().info('MOVE: can_go=False, stopped')
-                return
-
             skip_arrival_check = self._move_first_iteration
             self._move_first_iteration = False
 
@@ -357,19 +394,16 @@ class TrackerNode(Node):
             dy = target[1] - self.current_pos[1]
             dist = math.sqrt(dx * dx + dy * dy)
 
-            if not skip_arrival_check and dist <= self.arrive_threshold:
+            if not skip_arrival_check and dist < self.arrive_threshold:
                 if not self._move_to_next_target():
                     self._stop()
                     self.have_path = False
                     self.get_logger().info('MOVE: all done, stopped')
-                else:
-                    self._reset_pids()
-                    self.get_logger().info('MOVE: arrived, next target')
                 return
 
             self.get_logger().info(f'MOVE: pos=({self.current_pos[0]:.2f},{self.current_pos[1]:.2f}) target=({target[0]:.2f},{target[1]:.2f}) dist={dist:.3f} angle_err={angle_err:.3f}')
 
-            progress = min(1.0, (dist - self.arrive_threshold) / 0.1)
+            progress = min(1.0, max(0.0, (dist - (self.arrive_threshold - 0.05)) / 0.05))
             vx = dx / dist * self._p('max_vel_x') * progress
             vy = dy / dist * self._p('max_vel_y') * progress
 

@@ -47,8 +47,8 @@ tracker:
     # --- 通用 ---
     motion_type: 'omnidirectional'       # 运动模式：'omnidirectional' 或 'unidirectional'
     control_frequency: 50.0            # 控制频率 (Hz)
-    arrive_threshold: 0.00             # 到达目标点的距离阈值 (m)
-    angle_threshold: 0.00             # 角度对齐阈值 (rad)，约 4.6°
+    arrive_threshold: 0.02             # 到达目标点的距离阈值 (m)
+    angle_threshold: 0.02             # 角度对齐阈值 (rad)，约 4.6°
 
     # --- 全向模式 PID 参数 (motion_type=omnidirectional) ---
     kp_x: 3.0
@@ -82,3 +82,23 @@ odom_simulator:
     base_frame: 'base_link'
     publish_rate: 50.0
     # 起始位置（来自 grid.start_row / grid.start_col，自动计算）
+
+# ============================================================
+# Topic 名称配置（方便调试时快速切换）
+# ============================================================
+topics:
+  ros__parameters:
+    # Planner / Decision / Tracker 共享
+    kfs_grid_data: '/kfs_grid_data'
+    planning_path: '/planning/path'
+    can_go: '/can_go'
+    planning_direction: '/planning/direction'
+    planning_trigger: '/task/trigger'
+
+    # 里程计 & 控制
+    odom_world: '/odom_world'
+    cmd_vel: '/cmd_vel'
+
+    # Tracker 状态广播（在 TURN/MOVE 切换时发送）
+    tracker_direction: '/direction'        # Int32: -1=左转, 0=直走, 1=右转
+    target_yaw_deg: '/target_yaw_deg'      # Float32: 目标 yaw 角度（度）

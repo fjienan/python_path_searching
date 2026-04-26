@@ -59,17 +59,22 @@ class PathDecisionNode(Node):
             durability=QoSDurabilityPolicy.TRANSIENT_LOCAL
         )
 
+        odom_topic = self.declare_parameter('topics.odom_world', '/odom_world').value
+        kfs_topic = self.declare_parameter('topics.kfs_grid_data', '/kfs_grid_data').value
+        path_topic = self.declare_parameter('topics.planning_path', '/planning/path').value
+        can_go_topic = self.declare_parameter('topics.can_go', '/can_go').value
+
         self.odom_sub = self.create_subscription(
-            Odometry, '/odom_world', self.odom_callback, 10
+            Odometry, odom_topic, self.odom_callback, 10
         )
         self.kfs_data_sub = self.create_subscription(
-            String, '/kfs_grid_data', self.kfs_data_callback, qos_profile
+            String, kfs_topic, self.kfs_data_callback, qos_profile
         )
         self.path_sub = self.create_subscription(
-            Path, '/planning/path', self.path_callback, qos_profile
+            Path, path_topic, self.path_callback, qos_profile
         )
 
-        self.can_go_pub = self.create_publisher(Bool, '/can_go', 10)
+        self.can_go_pub = self.create_publisher(Bool, can_go_topic, 10)
 
         self.init_timer = self.create_timer(0.1, self.init_timer_callback)
         self.check_timer = self.create_timer(0.1, self.check_timer_callback)
