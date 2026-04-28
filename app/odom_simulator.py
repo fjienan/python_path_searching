@@ -31,9 +31,10 @@ class OdomSimulator(Node):
         self.declare_parameter('topics.odom_world', '/odom_world')
         self.declare_parameter('topics.real_odom', '/Odometry')
 
-        # 真实里程计切换
+        # 完全禁用本节点（保留文件，切换到真实SLAM模式时设为false）
+        self.declare_parameter('enabled', True)
+        # 真实里程计切换（仅在 enabled=true 时生效）
         self.declare_parameter('use_real_odom', False)
-        self.declare_parameter('real_odom_topic', '/Odometry')
         self.declare_parameter('real_odom_frame', 'odom')
 
         odom_frame = self.get_parameter('odom_frame').get_parameter_value().string_value
@@ -49,6 +50,8 @@ class OdomSimulator(Node):
         self._use_real_odom = self.get_parameter('use_real_odom').value
         self._real_odom_topic = self.get_parameter('topics.real_odom').value
         self._real_odom_frame = self.get_parameter('real_odom_frame').value
+
+        self._enabled = self.get_parameter('enabled').value
 
         map_origin_raw = self.get_parameter('grid.map_origin').value
         grid_resolution = self.get_parameter('grid.grid_resolution').value
@@ -79,11 +82,18 @@ class OdomSimulator(Node):
         self._odom_pub = self.create_publisher(
             Odometry, self.get_parameter('topics.odom_world').value, 10
         )
-        
+
         # TF broadcaster for odom->base_link transform
         self._tf_broadcaster = TransformBroadcaster(self)
 
-        if self._use_real_odom:
+        if not self._enabled:
+            self.get_logger().info(
+                'Odom simulator DISABLED (enabled=false). '
+                'No simulation, no passthrough. '
+                'Make sure your external SLAM odometry is publishing on the topic '
+                'that tracker.ros__parameters.topics.odom_world points to.'
+            )
+        elif self._use_real_odom:
             self._real_odom_sub = self.create_subscription(
                 Odometry, self._real_odom_topic, self._real_odom_callback, 10
             )
@@ -94,15 +104,16 @@ class OdomSimulator(Node):
         else:
             self.create_timer(self._dt, self._publish_odometry)
 
-        self.get_logger().info(
-            f'Odom simulator started. Publishing {publish_rate:.1f} Hz on /odom_world, motion_type={self._motion_type}'
-        )
-        self.get_logger().info(
-            f'Publishing TF transform: {self._odom_frame} -> {self._base_frame}'
-        )
-        self.get_logger().info(
-            f'Initial position: [{self._pose_x:.2f}, {self._pose_y:.2f}] (grid [-1][0])'
-        )
+        if self._enabled:
+            self.get_logger().info(
+                f'Odom simulator started. Publishing {publish_rate:.1f} Hz on /odom_world, motion_type={self._motion_type}'
+            )
+            self.get_logger().info(
+                f'Publishing TF transform: {self._odom_frame} -> {self._base_frame}'
+            )
+            self.get_logger().info(
+                f'Initial position: [{self._pose_x:.2f}, {self._pose_y:.2f}] (grid [-1][0])'
+            )
 
     def _cmd_callback(self, msg: Twist) -> None:
         self._vel_cmd = msg
