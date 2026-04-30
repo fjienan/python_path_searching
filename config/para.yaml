@@ -46,22 +46,23 @@ tracker:
     kd_dist: 0.1
     max_vel_forward: 0.5
 
-# --- Odom 仿真器 ---
-# enabled=true: 本地仿真（默认）
-# enabled=false: 使用外部 SLAM 里程计（真实机器人模式）
-# use_real_odom=true: 将外部 odom 转发到 /odom_world
+# --- Odom Simulator 参数（仿真模式使用） ---
+# 真实 SLAM 模式：注释掉 launch 中的 odom_simulator 节点，
+# 并确保外部 SLAM 的 odometry topic 与 tracker 的 topics.odom_world 一致。
 odom_simulator:
   ros__parameters:
     motion_type: 'omnidirectional'
     odom_frame: 'map'
     base_frame: 'base_link'
     publish_rate: 50.0
-    enabled: false
-    use_real_odom: true
+    grid:
+      map_origin: [3.2, 1.2, 0.0]
+      grid_resolution: 1.2
+      start_row: -1
+      start_col: 0
     topics:
       cmd_vel: '/cmd_vel'
       odom_world: '/odom_world'
-      real_odom: '/odin1/odometry_highfreq'
 
 # --- Topics ---
 topics:
@@ -71,7 +72,7 @@ topics:
     can_go: '/can_go'
     planning_direction: '/planning/direction'
     planning_trigger: '/task/trigger'
-    odom_world: '/odom_world'
+    odom_world: '/odin1/odometry_highfreq'
     cmd_vel: '/cmd_vel'
     tracker_direction: '/direction'
     target_yaw_deg: '/target_yaw_deg'

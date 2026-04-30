@@ -26,32 +26,18 @@ class OdomSimulator(Node):
         self.declare_parameter('grid.grid_resolution', 1.2)
         self.declare_parameter('grid.start_row', -1)
         self.declare_parameter('grid.start_col', 0)
-
         self.declare_parameter('topics.cmd_vel', '/cmd_vel')
         self.declare_parameter('topics.odom_world', '/odom_world')
-        self.declare_parameter('topics.real_odom', '/Odometry')
-
-        # 完全禁用本节点（保留文件，切换到真实SLAM模式时设为false）
-        self.declare_parameter('enabled', True)
-        # 真实里程计切换（仅在 enabled=true 时生效）
-        self.declare_parameter('use_real_odom', False)
-        self.declare_parameter('real_odom_frame', 'odom')
 
         odom_frame = self.get_parameter('odom_frame').get_parameter_value().string_value
         base_frame = self.get_parameter('base_frame').get_parameter_value().string_value
         publish_rate = max(1.0, self.get_parameter('publish_rate').value)
         motion_type = self.get_parameter('motion_type').get_parameter_value().string_value
 
-        self._odom_frame = odom_frame or 'odom'
+        self._odom_frame = odom_frame or 'map'
         self._base_frame = base_frame or 'base_link'
         self._motion_type = motion_type or 'omnidirectional'
         self._dt = 1.0 / publish_rate
-
-        self._use_real_odom = self.get_parameter('use_real_odom').value
-        self._real_odom_topic = self.get_parameter('topics.real_odom').value
-        self._real_odom_frame = self.get_parameter('real_odom_frame').value
-
-        self._enabled = self.get_parameter('enabled').value
 
         map_origin_raw = self.get_parameter('grid.map_origin').value
         grid_resolution = self.get_parameter('grid.grid_resolution').value
@@ -65,9 +51,7 @@ class OdomSimulator(Node):
         self._pose_y = start_y
         self._pose_z = 0.0
         self._yaw = 0.0
-
         self._vel_cmd: Twist = Twist()
-
         self._last_update: Optional[Time] = None
 
         self._cmd_sub = self.create_subscription(
@@ -82,60 +66,23 @@ class OdomSimulator(Node):
         self._odom_pub = self.create_publisher(
             Odometry, self.get_parameter('topics.odom_world').value, 10
         )
-
-        # TF broadcaster for odom->base_link transform
         self._tf_broadcaster = TransformBroadcaster(self)
 
-        if not self._enabled:
-            self.get_logger().info(
-                'Odom simulator DISABLED (enabled=false). '
-                'No simulation, no passthrough. '
-                'Make sure your external SLAM odometry is publishing on the topic '
-                'that tracker.ros__parameters.topics.odom_world points to.'
-            )
-        elif self._use_real_odom:
-            self._real_odom_sub = self.create_subscription(
-                Odometry, self._real_odom_topic, self._real_odom_callback, 10
-            )
-            self.get_logger().info(
-                f'Running in REAL ODOM mode, forwarding from {self._real_odom_topic} '
-                f'(frame_id={self._real_odom_frame}) to /odom_world'
-            )
-        else:
-            self.create_timer(self._dt, self._publish_odometry)
+        self.create_timer(self._dt, self._publish_odometry)
 
-        if self._enabled:
-            self.get_logger().info(
-                f'Odom simulator started. Publishing {publish_rate:.1f} Hz on /odom_world, motion_type={self._motion_type}'
-            )
-            self.get_logger().info(
-                f'Publishing TF transform: {self._odom_frame} -> {self._base_frame}'
-            )
-            self.get_logger().info(
-                f'Initial position: [{self._pose_x:.2f}, {self._pose_y:.2f}] (grid [-1][0])'
-            )
+        self.get_logger().info(
+            f'Odom simulator started. Publishing {publish_rate:.1f} Hz on '
+            f'{self.get_parameter("topics.odom_world").value}, motion_type={self._motion_type}'
+        )
+        self.get_logger().info(
+            f'Publishing TF transform: {self._odom_frame} -> {self._base_frame}'
+        )
+        self.get_logger().info(
+            f'Initial position: [{self._pose_x:.2f}, {self._pose_y:.2f}] (grid [{start_row}][{start_col}])'
+        )
 
     def _cmd_callback(self, msg: Twist) -> None:
         self._vel_cmd = msg
-
-    def _real_odom_callback(self, msg: Odometry) -> None:
-        """将真实里程计消息直接转发到 /odom_world，frame 保持不变"""
-        out = Odometry()
-        out.header = msg.header
-        out.child_frame_id = self._base_frame
-        out.pose = msg.pose
-        out.twist = msg.twist
-        self._odom_pub.publish(out)
-
-        t = TransformStamped()
-        t.header.stamp = self.get_clock().now().to_msg()
-        t.header.frame_id = msg.header.frame_id
-        t.child_frame_id = self._base_frame
-        t.transform.translation.x = msg.pose.pose.position.x
-        t.transform.translation.y = msg.pose.pose.position.y
-        t.transform.translation.z = msg.pose.pose.position.z
-        t.transform.rotation = msg.pose.pose.orientation
-        self._tf_broadcaster.sendTransform(t)
 
     def _initial_pose_callback(self, msg: PoseWithCovarianceStamped) -> None:
         pose = msg.pose.pose
@@ -163,7 +110,8 @@ class OdomSimulator(Node):
 
         self._last_update = msg.header.stamp
         self.get_logger().info(
-            f'Received /initialpose: ({self._pose_x:.2f}, {self._pose_y:.2f}, {self._pose_z:.2f}), yaw={math.degrees(self._yaw):.1f} deg'
+            f'Received /initialpose: ({self._pose_x:.2f}, {self._pose_y:.2f}, {self._pose_z:.2f}), '
+            f'yaw={math.degrees(self._yaw):.1f} deg'
         )
 
     def _publish_odometry(self) -> None:
@@ -187,17 +135,14 @@ class OdomSimulator(Node):
 
         self._pose_x += vx_global * dt
         self._pose_y += vy_global * dt
-        # 平面机器人：固定Z坐标为0
         self._pose_z = 0.0
         self._yaw += wz * dt
-
         self._yaw = math.atan2(math.sin(self._yaw), math.cos(self._yaw))
 
         odom_msg = Odometry()
         odom_msg.header.stamp = now
         odom_msg.header.frame_id = self._odom_frame
         odom_msg.child_frame_id = self._base_frame
-
         odom_msg.pose.pose.position.x = self._pose_x
         odom_msg.pose.pose.position.y = self._pose_y
         odom_msg.pose.pose.position.z = self._pose_z
@@ -205,36 +150,21 @@ class OdomSimulator(Node):
         half_yaw = self._yaw * 0.5
         odom_msg.pose.pose.orientation.z = math.sin(half_yaw)
         odom_msg.pose.pose.orientation.w = math.cos(half_yaw)
-
         odom_msg.twist.twist = self._vel_cmd
 
         self._odom_pub.publish(odom_msg)
-        
-        # Publish TF transform (equivalent to odom message)
-        self._publish_tf(now)
-    
-    def _publish_tf(self, stamp) -> None:
-        """发布TF变换，从odom_frame到base_frame"""
+
         t = TransformStamped()
-        
-        # 设置时间戳
-        t.header.stamp = stamp
-        t.header.frame_id = self._odom_frame  # 父坐标系（通常是 'map'）
-        t.child_frame_id = self._base_frame   # 子坐标系（通常是 'base_link'）
-        
-        # 设置平移
+        t.header.stamp = now
+        t.header.frame_id = self._odom_frame
+        t.child_frame_id = self._base_frame
         t.transform.translation.x = self._pose_x
         t.transform.translation.y = self._pose_y
         t.transform.translation.z = self._pose_z
-        
-        # 设置旋转（从yaw角转换为四元数）
-        half_yaw = self._yaw * 0.5
         t.transform.rotation.z = math.sin(half_yaw)
         t.transform.rotation.w = math.cos(half_yaw)
         t.transform.rotation.x = 0.0
         t.transform.rotation.y = 0.0
-        
-        # 发布TF
         self._tf_broadcaster.sendTransform(t)
 
 
@@ -250,4 +180,3 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
-
