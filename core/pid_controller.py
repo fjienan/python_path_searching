@@ -17,7 +17,7 @@ class PIDController:
         self.last_timestamp = None
 
     def compute(self, current_error, dt):
-        """计算 PID 控制量"""
+        """计算 PID 控制量（常规形式：误差 = 目标 - 当前）"""
         if dt <= 0.0:
             return 0.0
 
@@ -36,3 +36,8 @@ class PIDController:
             output = max(-self.output_limit, min(self.output_limit, output))
 
         return output
+
+    def compute_from_setpoint(self, current_value, setpoint_value, dt):
+        """从给定当前值和设定值计算 PID 控制量"""
+        error = setpoint_value - current_value
+        return self.compute(error, dt)

@@ -18,31 +18,31 @@ class OdomSimulator(Node):
     def __init__(self) -> None:
         super().__init__('odom_simulator')
 
-        self.declare_parameter('odom_frame', 'map')
-        self.declare_parameter('base_frame', 'base_link')
-        self.declare_parameter('publish_rate', 50.0)
-        self.declare_parameter('motion_type', 'omnidirectional')
-        self.declare_parameter('grid.map_origin', [3.2, 1.2, 0.0])
-        self.declare_parameter('grid.grid_resolution', 1.2)
-        self.declare_parameter('grid.start_row', -1)
-        self.declare_parameter('grid.start_col', 0)
-        self.declare_parameter('topics.cmd_vel', '/cmd_vel')
-        self.declare_parameter('topics.odom_world', '/odom_world')
+        self.declare_parameter('odom_frame',    'map')
+        self.declare_parameter('base_frame',    'base_link')
+        self.declare_parameter('publish_rate',  50.0)
+        self.declare_parameter('motion_type',   'omnidirectional')
+        self.declare_parameter('map_origin',        [3.2, 1.2, 0.0])
+        self.declare_parameter('grid_resolution',   1.2)
+        self.declare_parameter('start_row',         -1)
+        self.declare_parameter('start_col',          0)
+        self.declare_parameter('cmd_vel',        '/cmd_vel')
+        self.declare_parameter('odom_world',    '/odom_world')
 
-        odom_frame = self.get_parameter('odom_frame').get_parameter_value().string_value
-        base_frame = self.get_parameter('base_frame').get_parameter_value().string_value
+        odom_frame   = self.get_parameter('odom_frame').get_parameter_value().string_value
+        base_frame   = self.get_parameter('base_frame').get_parameter_value().string_value
         publish_rate = max(1.0, self.get_parameter('publish_rate').value)
-        motion_type = self.get_parameter('motion_type').get_parameter_value().string_value
+        motion_type  = self.get_parameter('motion_type').get_parameter_value().string_value
 
-        self._odom_frame = odom_frame or 'map'
-        self._base_frame = base_frame or 'base_link'
-        self._motion_type = motion_type or 'omnidirectional'
+        self._odom_frame   = odom_frame or 'map'
+        self._base_frame   = base_frame or 'base_link'
+        self._motion_type   = motion_type or 'omnidirectional'
         self._dt = 1.0 / publish_rate
 
-        map_origin_raw = self.get_parameter('grid.map_origin').value
-        grid_resolution = self.get_parameter('grid.grid_resolution').value
-        start_row = self.get_parameter('grid.start_row').value
-        start_col = self.get_parameter('grid.start_col').value
+        map_origin_raw    = self.get_parameter('map_origin').value
+        grid_resolution   = self.get_parameter('grid_resolution').value
+        start_row         = self.get_parameter('start_row').value
+        start_col         = self.get_parameter('start_col').value
 
         start_x = map_origin_raw[0] + start_row * grid_resolution + 0.5 * grid_resolution
         start_y = map_origin_raw[1] + start_col * grid_resolution + 0.5 * grid_resolution
@@ -55,7 +55,7 @@ class OdomSimulator(Node):
         self._last_update: Optional[Time] = None
 
         self._cmd_sub = self.create_subscription(
-            Twist, self.get_parameter('topics.cmd_vel').value, self._cmd_callback, 10
+            Twist, self.get_parameter('cmd_vel').value, self._cmd_callback, 10
         )
         self._initial_pose_sub = self.create_subscription(
             PoseWithCovarianceStamped,
@@ -64,7 +64,7 @@ class OdomSimulator(Node):
             10,
         )
         self._odom_pub = self.create_publisher(
-            Odometry, self.get_parameter('topics.odom_world').value, 10
+            Odometry, self.get_parameter('odom_world').value, 10
         )
         self._tf_broadcaster = TransformBroadcaster(self)
 
@@ -72,7 +72,7 @@ class OdomSimulator(Node):
 
         self.get_logger().info(
             f'Odom simulator started. Publishing {publish_rate:.1f} Hz on '
-            f'{self.get_parameter("topics.odom_world").value}, motion_type={self._motion_type}'
+            f'{self.get_parameter("odom_world").value}, motion_type={self._motion_type}'
         )
         self.get_logger().info(
             f'Publishing TF transform: {self._odom_frame} -> {self._base_frame}'

@@ -26,16 +26,16 @@ class PathDecisionNode(Node):
     def __init__(self):
         super().__init__('path_decision')
 
-        self.declare_parameter('grid.map_origin', [3.2, 1.2, 0.0])
-        self.declare_parameter('grid.grid_rows', 4)
-        self.declare_parameter('grid.grid_cols', 3)
-        self.declare_parameter('grid.grid_resolution', 1.2)
+        self.declare_parameter('map_origin',        [3.2, 1.2, 0.0])
+        self.declare_parameter('grid_rows',         4)
+        self.declare_parameter('grid_cols',          3)
+        self.declare_parameter('grid_resolution',   1.2)
 
-        map_origin_raw = self.get_parameter('grid.map_origin').value
+        map_origin_raw = self.get_parameter('map_origin').value
         self.MAP_ORIGIN = tuple(map_origin_raw)
-        self.GRID_ROWS = self.get_parameter('grid.grid_rows').value
-        self.GRID_COLS = self.get_parameter('grid.grid_cols').value
-        self.GRID_RESOLUTION = self.get_parameter('grid.grid_resolution').value
+        self.GRID_ROWS = self.get_parameter('grid_rows').value
+        self.GRID_COLS = self.get_parameter('grid_cols').value
+        self.GRID_RESOLUTION = self.get_parameter('grid_resolution').value
 
         self.grid_converter = GridConverter(
             grid_rows=self.GRID_ROWS,
@@ -59,10 +59,10 @@ class PathDecisionNode(Node):
             durability=QoSDurabilityPolicy.TRANSIENT_LOCAL
         )
 
-        odom_topic = self.declare_parameter('topics.odom_world', '/odom_world').value
-        kfs_topic = self.declare_parameter('topics.kfs_grid_data', '/kfs_grid_data').value
-        path_topic = self.declare_parameter('topics.planning_path', '/planning/path').value
-        can_go_topic = self.declare_parameter('topics.can_go', '/can_go').value
+        odom_topic = self.declare_parameter('odom_world', '/odom_world').value
+        kfs_topic = self.declare_parameter('kfs_grid_data', '/kfs_grid_data').value
+        path_topic = self.declare_parameter('planning_path', '/planning/path').value
+        can_go_topic = self.declare_parameter('can_go', '/can_go').value
 
         self.odom_sub = self.create_subscription(
             Odometry, odom_topic, self.odom_callback, 10

@@ -37,24 +37,24 @@ class AStarPlannerNode(Node):
     def __init__(self):
         super().__init__('astar_planner')
 
-        # 从参数服务器读取 grid 公共参数
-        self.declare_parameter('grid.map_origin', [3.2, 1.2, 0.0])
-        self.declare_parameter('grid.grid_rows', 4)
-        self.declare_parameter('grid.grid_cols', 3)
-        self.declare_parameter('grid.grid_resolution', 1.2)
-        self.declare_parameter('grid.goal_grid_0', [3, 0])
-        self.declare_parameter('grid.goal_grid_1', [3, 1])
-        self.declare_parameter('grid.goal_grid_2', [3, 2])
+        # 从参数服务器读取参数（与 para.yaml 顶层键一一对应）
+        self.declare_parameter('map_origin',        [3.2, 1.2, 0.0])
+        self.declare_parameter('grid_rows',         4)
+        self.declare_parameter('grid_cols',          3)
+        self.declare_parameter('grid_resolution',   1.2)
+        self.declare_parameter('goal_grid_0',       [3, 0])
+        self.declare_parameter('goal_grid_1',       [3, 1])
+        self.declare_parameter('goal_grid_2',       [3, 2])
 
-        map_origin_raw = self.get_parameter('grid.map_origin').value
+        map_origin_raw = self.get_parameter('map_origin').value
         self.MAP_ORIGIN = tuple(map_origin_raw)
-        self.GRID_ROWS = self.get_parameter('grid.grid_rows').value
-        self.GRID_COLS = self.get_parameter('grid.grid_cols').value
-        self.GRID_RESOLUTION = self.get_parameter('grid.grid_resolution').value
+        self.GRID_ROWS = self.get_parameter('grid_rows').value
+        self.GRID_COLS = self.get_parameter('grid_cols').value
+        self.GRID_RESOLUTION = self.get_parameter('grid_resolution').value
         self.GOAL_GRIDS = [
-            list(self.get_parameter('grid.goal_grid_0').value),
-            list(self.get_parameter('grid.goal_grid_1').value),
-            list(self.get_parameter('grid.goal_grid_2').value),
+            list(self.get_parameter('goal_grid_0').value),
+            list(self.get_parameter('goal_grid_1').value),
+            list(self.get_parameter('goal_grid_2').value),
         ]
 
         self.planner = AStarPlanner(
@@ -81,11 +81,11 @@ class AStarPlannerNode(Node):
         self.max_r2kfs_count = self.declare_parameter('max_r2kfs_count', 2).value
         self.allowed_r2kfs_positions = set()
 
-        kfs_topic = self.declare_parameter('topics.kfs_grid_data', '/kfs_grid_data').value
-        odom_topic = self.declare_parameter('topics.odom_world', '/odom_world').value
-        trigger_topic = self.declare_parameter('topics.planning_trigger', '/task/trigger').value
-        direction_topic = self.declare_parameter('topics.planning_direction', '/planning/direction').value
-        path_topic = self.declare_parameter('topics.planning_path', '/planning/path').value
+        kfs_topic = self.declare_parameter('kfs_grid_data', '/kfs_grid_data').value
+        odom_topic = self.declare_parameter('odom_world', '/odom_world').value
+        trigger_topic = self.declare_parameter('planning_trigger', '/task/trigger').value
+        direction_topic = self.declare_parameter('planning_direction', '/planning/direction').value
+        path_topic = self.declare_parameter('planning_path', '/planning/path').value
 
         qos_profile = QoSProfile(
             reliability=QoSReliabilityPolicy.RELIABLE,
@@ -118,6 +118,10 @@ class AStarPlannerNode(Node):
         self.planning_timer = self.create_timer(0.1, self.check_and_plan)
 
         self.get_logger().info('A* Planner Node started')
+        self.get_logger().warn(f'''
+        map_origin: {self.MAP_ORIGIN}
+        odom_topic: {odom_topic}
+        ''')
         self.get_logger().info(f'Goals: {self.GOAL_GRIDS}')
 
     def odom_callback(self, msg):
