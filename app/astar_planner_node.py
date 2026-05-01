@@ -126,8 +126,8 @@ class AStarPlannerNode(Node):
 
     def odom_callback(self, msg):
         """处理里程计消息，更新当前位置"""
-        self.current_pos[0] = msg.pose.pose.position.x
-        self.current_pos[1] = msg.pose.pose.position.y
+        self.current_pos[0] = -msg.pose.pose.position.x
+        self.current_pos[1] = -msg.pose.pose.position.y
         self.current_pos[2] = msg.pose.pose.position.z
         self.has_odom = True
 

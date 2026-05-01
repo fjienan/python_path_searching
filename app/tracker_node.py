@@ -167,8 +167,8 @@ class TrackerNode(Node):
         self.get_logger().info(f'Received path with {len(msg.poses)} points')
 
     def _odom_callback(self, msg):
-        self.current_pos[0] = msg.pose.pose.position.x
-        self.current_pos[1] = msg.pose.pose.position.y
+        self.current_pos[0] = -msg.pose.pose.position.x
+        self.current_pos[1] = -msg.pose.pose.position.y
         self.current_pos[2] = msg.pose.pose.position.z
         self.current_yaw = yaw_from_quaternion(msg.pose.pose.orientation)
         self.have_odom = True
@@ -459,6 +459,10 @@ class TrackerNode(Node):
                     f'sign={lat_sign:.0f} vy_correct={vy_correct:.3f}'
                 )
 
+            # 姿态闭环校正：持续修正朝向
+            vyaw_correction = self.pid_yaw.compute(angle_error, dt)
+            vyaw_correction = max(-self._p('max_vel_yaw'), min(self._p('max_vel_yaw'), vyaw_correction))
+
             # 主方向速度（沿路径方向）
             progress = min(1.0, max(0.0, (dist - (self.arrive_threshold - 0.05)) / 0.05))
             vx = (dx / dist) * self._p('max_vel_x') * progress if dist > 1e-6 else 0.0
@@ -470,7 +474,7 @@ class TrackerNode(Node):
             vx = max(-self._p('max_vel_x'), min(self._p('max_vel_x'), vx))
             vy = max(-self._p('max_vel_y'), min(self._p('max_vel_y'), vy))
 
-            self._publish_cmd(vx, vy, 0.0)
+            self._publish_cmd(vx, vy, vyaw_correction)
 
     def _stop(self):
         self._publish_cmd(0.0, 0.0, 0.0)
