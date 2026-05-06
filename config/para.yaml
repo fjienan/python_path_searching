@@ -9,7 +9,7 @@
   ros__parameters:
 
     # -------------------- 场地网格 --------------------
-    map_origin:        [3.2, 1.2, 0.0]
+    map_origin:        [0.6, -0.6, 0.0]
     grid_rows:         4
     grid_cols:         3
     grid_resolution:   1.2
@@ -36,15 +36,15 @@
     kd_x:   0.2
     max_vel_x:   0.5
 
-    kp_y:   3.0
+    kp_y:   1.0
     ki_y:   0.0
-    kd_y:   0.2
-    max_vel_y:   0.5
+    kd_y:   0.5
+    max_vel_y:   0.3
 
-    kp_yaw:   5.0
+    kp_yaw:   0.1
     ki_yaw:   0.0
-    kd_yaw:   0.3
-    max_vel_yaw:   2.0
+    kd_yaw:   0.0
+    max_vel_yaw:   0.3
 
     # ---------- 单向模式 PID ----------
     kp_angle: 4.0
@@ -59,9 +59,9 @@
 
     # ---------- 直线闭环校正 (MOVE 状态) ----------
     # 侧向误差 PID（仅 MOVE 阶段生效）
-    kp_lateral:   2.5
+    kp_lateral:   1.0
     ki_lateral:   0.0
-    kd_lateral:   0.1
+    kd_lateral:   0.2
     max_correction:   0.3      # 最大侧向校正速度 (m/s)
     lateral_threshold: 0.05     # 侧向误差超过此值时才启用校正
 

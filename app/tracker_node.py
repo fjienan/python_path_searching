@@ -28,6 +28,7 @@ import math
 import numpy as np
 
 from core.pid_controller import PIDController
+from robot_pose.transformer import PoseTransformerQuat
 from core.transform_utils import yaw_from_quaternion
 
 
@@ -52,9 +53,9 @@ class TrackerNode(Node):
         self.declare_parameter('target_yaw_deg',      '/target_yaw_deg')
 
         # --- 全向模式 PID ---
-        self.declare_parameter('kp_x',   3.0); self.declare_parameter('ki_x',   0.0); self.declare_parameter('kd_x',   0.2)
-        self.declare_parameter('kp_y',   3.0); self.declare_parameter('ki_y',   0.0); self.declare_parameter('kd_y',   0.2)
-        self.declare_parameter('kp_yaw', 5.0); self.declare_parameter('ki_yaw', 0.0); self.declare_parameter('kd_yaw', 0.3)
+        self.declare_parameter('kp_x',   6.0); self.declare_parameter('ki_x',   0.0); self.declare_parameter('kd_x',   0.2)
+        self.declare_parameter('kp_y',   6.0); self.declare_parameter('ki_y',   0.0); self.declare_parameter('kd_y',   0.2)
+        self.declare_parameter('kp_yaw', 2.0); self.declare_parameter('ki_yaw', 0.0); self.declare_parameter('kd_yaw', 0.5)
         self.declare_parameter('max_vel_x',  0.5)
         self.declare_parameter('max_vel_y',  0.5)
         self.declare_parameter('max_vel_yaw', 2.0)
@@ -88,7 +89,12 @@ class TrackerNode(Node):
         self.have_odom             = False
         self.can_go                = False
         self.prev_can_go           = False
-
+        self.T = np.array([
+        [-1.0, 0.0, 0.0, 0.35],
+        [0.0,  -1.0, 0.0, 0.0],
+        [0.0,  0.0, 1.0, 0.0],
+        [0.0,  0.0, 0.0, 1.0]
+        ])
         # 直线闭环状态变量
         self._move_start_pos = np.array([0.0, 0.0])
 
@@ -167,10 +173,18 @@ class TrackerNode(Node):
         self.get_logger().info(f'Received path with {len(msg.poses)} points')
 
     def _odom_callback(self, msg):
-        self.current_pos[0] = -msg.pose.pose.position.x
-        self.current_pos[1] = -msg.pose.pose.position.y
-        self.current_pos[2] = msg.pose.pose.position.z
-        self.current_yaw = yaw_from_quaternion(msg.pose.pose.orientation)
+        current_pose = [0, 0, 0, 0, 0, 0, 0]
+        current_pose = [msg.pose.pose.position.x, msg.pose.pose.position.y, msg.pose.pose.position.z, msg.pose.pose.orientation.x, msg.pose.pose.orientation.y, msg.pose.pose.orientation.z, msg.pose.pose.orientation.w]
+        transformer = PoseTransformerQuat()
+        new_pose = transformer.apply_matrix_to_pose(current_pose, self.T)
+        self.current_pos[0] = new_pose[0] - self.T[0][3]
+        self.current_pos[1] = new_pose[1]
+        self.current_pos[2] = new_pose[2]
+        self.quaterion = new_pose[3:8]
+        self.current_yaw = yaw_from_quaternion(self.quaterion) + np.pi
+        # self.get_logger().warn(f"""
+        # yaw:{self.current_yaw}
+        # """)
         self.have_odom = True
 
     def _can_go_callback(self, msg):
@@ -279,7 +293,7 @@ class TrackerNode(Node):
         nx = -dy_path / path_len
         ny =  dx_path / path_len
         # 法向量点积误差向量确定方向符号
-        lateral_sign = 1.0 if (err_x * nx + err_y * ny) >= 0.0 else -1.0
+        lateral_sign = -1.0 if (err_x * nx + err_y * ny) >= 0.0 else 1.0
 
         return lateral_err * lateral_sign, lateral_sign
 
@@ -406,7 +420,10 @@ class TrackerNode(Node):
                 self.can_go = False
                 self.prev_can_go = False
                 self._reset_pids()
-                self.get_logger().info('Angle aligned, entering HOLD')
+                self.get_logger().info(f"""
+                        Angle aligned, entering HOLD
+                        current_yaw:{self.current_yaw}
+                """)
                 return
             self._publish_cmd(0.0, 0.0, vyaw)
             return
@@ -473,7 +490,14 @@ class TrackerNode(Node):
 
             vx = max(-self._p('max_vel_x'), min(self._p('max_vel_x'), vx))
             vy = max(-self._p('max_vel_y'), min(self._p('max_vel_y'), vy))
-
+            self.get_logger().error(
+                f"""
+            current_yaw:{self.current_yaw}
+            vx:{vx}
+            vy:{vy}
+            vyaw:{vyaw_correction}
+            """
+            )
             self._publish_cmd(vx, vy, vyaw_correction)
 
     def _stop(self):

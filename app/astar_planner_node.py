@@ -29,6 +29,7 @@ import numpy as np
 
 from core.astar import AStarPlanner
 from core.grid_utils import GridConverter
+from robot_pose.transformer import PoseTransformerQuat
 
 
 class AStarPlannerNode(Node):
@@ -57,6 +58,12 @@ class AStarPlannerNode(Node):
             list(self.get_parameter('goal_grid_2').value),
         ]
 
+        self.T = np.array([
+        [-1.0, 0.0, 0.0, 0.35],
+        [0.0,  -1.0, 0.0, 0.0],
+        [0.0,  0.0, 1.0, 0.0],
+        [0.0,  0.0, 0.0, 1.0]
+        ])
         self.planner = AStarPlanner(
             grid_rows=self.GRID_ROWS,
             grid_cols=self.GRID_COLS,
@@ -126,9 +133,14 @@ class AStarPlannerNode(Node):
 
     def odom_callback(self, msg):
         """处理里程计消息，更新当前位置"""
-        self.current_pos[0] = -msg.pose.pose.position.x
-        self.current_pos[1] = -msg.pose.pose.position.y
-        self.current_pos[2] = msg.pose.pose.position.z
+        current_pose = [0, 0, 0, 0, 0, 0, 0]
+        current_pose = [msg.pose.pose.position.x, msg.pose.pose.position.y, msg.pose.pose.position.z, msg.pose.pose.orientation.x, msg.pose.pose.orientation.y, msg.pose.pose.orientation.z, msg.pose.pose.orientation.w]
+        transformer = PoseTransformerQuat()
+        new_pose = transformer.apply_matrix_to_pose(current_pose, self.T)
+        self.current_pos[0] = new_pose[0] - self.T[0][3]
+        self.current_pos[1] = new_pose[1]
+        self.current_pos[2] = new_pose[2]        
+        self.quaterion = new_pose[3:7]
         self.has_odom = True
 
     def kfs_data_callback(self, msg):

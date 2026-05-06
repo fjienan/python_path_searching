@@ -5,6 +5,10 @@
 ## 项目结构
 
 ```
+ros2 topic pub /can_go std_msgs/msg/Bool "data: true"
+```
+
+```
 python_path_searching/
 ├── core/                    # 核心算法和工具类
 │   ├── astar.py            # A* 路径规划算法
