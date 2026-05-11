@@ -23,7 +23,7 @@
     # -------------------- Tracker 运动模式 --------------------
     # 'omnidirectional' : 全向（可横移），用 PID-x / PID-y / PID-yaw
     # 'unidirectional'  : 单向（只能前进），用 PID-dist / PID-angle
-    motion_type:       'omnidirectional'
+    motion_type:       'unidirectional'
 
     # -------------------- Tracker 控制频率 --------------------
     control_frequency: 50.0
@@ -71,8 +71,10 @@
     can_go:               '/can_go'
     planning_direction:   '/planning/direction'
     planning_trigger:     '/task/trigger'
-    odom_world:           '/odin1/odometry_highfreq'
-    cmd_vel:              '/t0x0101'
+    # odom_world:           '/odin1/odometry_highfreq'
+    odom_world:         '/odom_world'
+    # cmd_vel:              '/t0x0101'
+    cmd_vel:            '/cmd_vel'
     tracker_direction:    '/direction'
     target_yaw_deg:       '/target_yaw_deg'
 

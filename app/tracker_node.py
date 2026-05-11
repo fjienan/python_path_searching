@@ -382,25 +382,39 @@ class TrackerNode(Node):
             self._read_target_yaw()
             dx   = target[0] - self.current_pos[0]
             dy   = target[1] - self.current_pos[1]
-            dist = math.sqrt(dx * dx + dy * dy)
+            
+            # 计算目标点在车体前向轴（局部 X 轴）上的投影投影距离（带正负号）
+            local_dx = dx * math.cos(self.current_yaw) + dy * math.sin(self.current_yaw)
+            dist_abs = math.hypot(dx, dy)
 
-            # ---- 前进速度 ----
-            forward_vel = self.pid_dist.compute(dist, dt)
-            if dist >= self.arrive_threshold:
-                if forward_vel > 0:
-                    forward_vel = max(0.15, min(self._p('max_vel_forward'), forward_vel))
+            # ---- 前进速度 (改为使用本地纵向误差投影来计算，支持后退修正) ----
+            forward_vel = self.pid_dist.compute(local_dx, dt)
+            if dist_abs >= self.arrive_threshold:
+                # 速度限幅，保留正负号
+                sign = 1.0 if forward_vel > 0 else -1.0
+                forward_vel = sign * max(0.15, min(self._p('max_vel_forward'), abs(forward_vel)))
             else:
                 forward_vel = 0.0
 
-            # ---- 角度 PID（朝向路径方向 target_yaw，不做侧偏绕弯校正）----
-            angle_error = self._normalize_angle(self.target_yaw - self.current_yaw)
+            # ---- 角度 PID ----
+            # 对于单向模式而言，不应该盲目锁死 target_yaw。如果距离较远，车头应当对准目标点。
+            if dist_abs > 0.2:
+                desired_yaw = math.atan2(dy, dx)
+                # 倒车情况判定
+                if local_dx < 0:
+                    desired_yaw = self._normalize_angle(desired_yaw + math.pi)
+            else:
+                # 接近目标时，逐渐将姿态向路径终点姿态对齐
+                desired_yaw = self.target_yaw
+
+            angle_error = self._normalize_angle(desired_yaw - self.current_yaw)
             angular_vel = self.pid_angle.compute(angle_error, dt)
             angular_vel = max(-self._p('max_angular'), min(self._p('max_angular'), angular_vel))
 
             self.get_logger().info(
                 f'MOVE: pos=({self.current_pos[0]:.2f},{self.current_pos[1]:.2f}) '
                 f'target=({target[0]:.2f},{target[1]:.2f}) '
-                f'dist={dist:.3f} angle_err={abs(angle_error):.3f}'
+                f'dist={dist_abs:.3f} local_dx={local_dx:.3f} angle_err={abs(angle_error):.3f}'
             )
 
             self._publish_cmd(forward_vel, 0.0, angular_vel)
