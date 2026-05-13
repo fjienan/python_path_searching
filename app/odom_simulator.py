@@ -7,6 +7,7 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist, PoseWithCovarianceStamped
 from nav_msgs.msg import Odometry
+from std_msgs.msg import Float32MultiArray
 from builtin_interfaces.msg import Time
 from tf2_ros import TransformBroadcaster
 from geometry_msgs.msg import TransformStamped
@@ -55,7 +56,7 @@ class OdomSimulator(Node):
         self._last_update: Optional[Time] = None
 
         self._cmd_sub = self.create_subscription(
-            Twist, self.get_parameter('cmd_vel').value, self._cmd_callback, 10
+            Float32MultiArray, self.get_parameter('cmd_vel').value, self._cmd_callback, 10
         )
         self._initial_pose_sub = self.create_subscription(
             PoseWithCovarianceStamped,
@@ -81,8 +82,11 @@ class OdomSimulator(Node):
             f'Initial position: [{self._pose_x:.2f}, {self._pose_y:.2f}] (grid [{start_row}][{start_col}])'
         )
 
-    def _cmd_callback(self, msg: Twist) -> None:
-        self._vel_cmd = msg
+    def _cmd_callback(self, msg: Float32MultiArray) -> None:
+        if len(msg.data) >= 3:
+            self._vel_cmd.linear.x = float(msg.data[0])
+            self._vel_cmd.linear.y = float(msg.data[1])
+            self._vel_cmd.angular.z = float(msg.data[2])
 
     def _initial_pose_callback(self, msg: PoseWithCovarianceStamped) -> None:
         pose = msg.pose.pose
@@ -127,9 +131,10 @@ class OdomSimulator(Node):
             vy_global = self._vel_cmd.linear.y
         else:
             forward_vel = self._vel_cmd.linear.x
+            side_vel = self._vel_cmd.linear.y
             yaw = self._yaw
-            vx_global = forward_vel * math.cos(yaw)
-            vy_global = forward_vel * math.sin(yaw)
+            vx_global = forward_vel * math.cos(yaw) - side_vel * math.sin(yaw)
+            vy_global = forward_vel * math.sin(yaw) + side_vel * math.cos(yaw)
 
         wz = self._vel_cmd.angular.z
 

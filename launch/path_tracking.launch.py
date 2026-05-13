@@ -49,11 +49,11 @@ def generate_launch_description():
 
         # === 里程计仿真（仅仿真模式启用）===
         # 真实 SLAM 时注释掉本节点
-     #    Node(
-     #        package=pkg_name,
-     #        executable='odom_simulator',
-     #        name='odom_simulator',
-     #        output='screen',
-     #        parameters=[params_file],
-     #    ),
+        Node(
+            package=pkg_name,
+            executable='odom_simulator',
+            name='odom_simulator',
+            output='screen',
+            parameters=[params_file],
+        ),
     ])

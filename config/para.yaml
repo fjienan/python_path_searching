@@ -26,28 +26,12 @@
     motion_type:       'unidirectional'
 
     # -------------------- Tracker 控制频率 --------------------
-    control_frequency: 50.0
-    arrive_threshold:  0.12      # 判定到达目标的距离阈值 (m)
-    angle_threshold:   0.02      # 判定角度对齐的阈值 (rad)
-
-    # ---------- 全向模式 PID ----------
-    kp_x:   3.0
-    ki_x:   0.0
-    kd_x:   0.2
-    max_vel_x:   0.5
-
-    kp_y:   1.0
-    ki_y:   0.0
-    kd_y:   0.5
-    max_vel_y:   0.3
-
-    kp_yaw:   0.1
-    ki_yaw:   0.0
-    kd_yaw:   0.0
-    max_vel_yaw:   0.3
+    control_frequency: 100.0
+    arrive_threshold:  0.08      # 判定到达目标的距离阈值 (m)
+    angle_threshold:   0.03     # 判定角度对齐的阈值 (rad)
 
     # ---------- 单向模式 PID ----------
-    kp_angle: 4.0
+    kp_angle: 2.5
     ki_angle: 0.0
     kd_angle: 0.2
     max_angular:   2.0
@@ -55,15 +39,7 @@
     kp_dist: 2.5
     ki_dist: 0.0
     kd_dist: 0.1
-    max_vel_forward:   0.5
-
-    # ---------- 直线闭环校正 (MOVE 状态) ----------
-    # 侧向误差 PID（仅 MOVE 阶段生效）
-    kp_lateral:   1.0
-    ki_lateral:   0.0
-    kd_lateral:   0.2
-    max_correction:   0.3      # 最大侧向校正速度 (m/s)
-    lateral_threshold: 0.05     # 侧向误差超过此值时才启用校正
+    max_vel:   0.5
 
     # -------------------- Topics --------------------
     kfs_grid_data:        '/kfs_grid_data'
@@ -77,6 +53,7 @@
     cmd_vel:            '/cmd_vel'
     tracker_direction:    '/direction'
     target_yaw_deg:       '/target_yaw_deg'
+    suspension_state:     '/current_state'
 
     # -------------------- Odom Simulator (仿真模式) ----------
     odom_frame:    'map'
