@@ -21,8 +21,8 @@
     goal_grid_2:       [3, 2]
 
     # -------------------- Tracker 运动模式 --------------------
-    # 'omnidirectional' : 全向（可横移），用 PID-x / PID-y / PID-yaw
-    # 'unidirectional'  : 单向（只能前进），用 PID-dist / PID-angle
+    # 'omnidirectional' : 全向（可横移）
+    # 'unidirectional'  : 单向（只能前进）
     motion_type:       'unidirectional'
 
     # -------------------- Tracker 控制频率 --------------------
@@ -30,16 +30,16 @@
     arrive_threshold:  0.08      # 判定到达目标的距离阈值 (m)
     angle_threshold:   0.03     # 判定角度对齐的阈值 (rad)
 
-    # ---------- 单向模式 PID ----------
+    # ---------- PID ----------
     kp_angle: 2.5
     ki_angle: 0.0
     kd_angle: 0.2
-    max_angular:   2.0
+    max_angular:   3.0
 
     kp_dist: 2.5
     ki_dist: 0.0
     kd_dist: 0.1
-    max_vel:   0.5
+    max_vel:   0.8
 
     # -------------------- Topics --------------------
     kfs_grid_data:        '/kfs_grid_data'

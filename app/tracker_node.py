@@ -34,7 +34,7 @@ from core.transform_utils import yaw_from_quaternion
 
 class TrackerNode(Node):
 
-    TURN, MOVE, HOLD = 0, 1, 2
+    MOVE, HOLD = 1, 2
 
     def __init__(self):
         super().__init__('tracker')
@@ -58,33 +58,30 @@ class TrackerNode(Node):
         self.declare_parameter('suspension_state', '/current_state')
 
         # --- PID ---
-        self.declare_parameter('kp_angle',  4.0); self.declare_parameter('ki_angle',  0.0); self.declare_parameter('kd_angle',  0.2)
-        self.declare_parameter('kp_dist',   2.5); self.declare_parameter('ki_dist',   0.0); self.declare_parameter('kd_dist',   0.1)
+        self.declare_parameter('kp_angle', 4.0); self.declare_parameter('ki_angle', 0.0); self.declare_parameter('kd_angle', 0.2)
+        self.declare_parameter('kp_dist',  2.5); self.declare_parameter('ki_dist',  0.0); self.declare_parameter('kd_dist',  0.1)
         self.declare_parameter('max_vel', 0.5)
-        self.declare_parameter('max_angular',      2.0)
+        self.declare_parameter('max_angular', 2.0)
 
 
-        self.map_origin          = tuple(self.get_parameter('map_origin').value)
+        self.map_origin          = tuple(self._p('map_origin'))
+        self.motion_type         = self._p('motion_type')
+        self.control_frequency   = self._p('control_frequency')
+        self.arrive_threshold    = self._p('arrive_threshold')
+        self.angle_threshold     = self._p('angle_threshold')
 
-        self.motion_type         = self.get_parameter('motion_type').value
-        self.control_frequency   = self.get_parameter('control_frequency').value
-        self.arrive_threshold    = self.get_parameter('arrive_threshold').value
-        self.angle_threshold     = self.get_parameter('angle_threshold').value
-
-        self.get_logger().info(f'Tracker Node started, motion_type={self.motion_type}')
+        self.get_logger().info(f'__init__: Tracker Node started, motion_type={self.motion_type}')
 
         self.current_path          = None
         self.current_target_index  = 0
-        self._move_first_iteration = False
         self.current_pos           = np.array([0.0, 0.0, 0.0])
         self.current_yaw           = 0.0
         self.target_yaw            = 0.0
         self.have_path             = False
         self.have_odom             = False
         self.can_go                = False
-        self.prev_can_go           = False
         self.T = np.array([
-        [-1.0, 0.0, 0.0, 0.35],
+        [-1.0, 0.0, 0.0, 0.38],
         [0.0,  -1.0, 0.0, 0.0],
         [0.0,  0.0, 1.0, 0.0],
         [0.0,  0.0, 0.0, 1.0]
@@ -92,7 +89,7 @@ class TrackerNode(Node):
         # 直线闭环状态变量
         self._move_start_pos = np.array([0.0, 0.0])
 
-        self.state = self.TURN
+        self.state = self.HOLD
         self.state_switched = False
         
         self.suspension_state = 0
@@ -131,16 +128,16 @@ class TrackerNode(Node):
         self.yaw_pub = self.create_publisher(Float32,  self._p('target_yaw_deg',    '/target_yaw_deg'),    10)
 
     def _suspension_state_callback(self, msg):
-        self.suspension_state=msg
+        self.suspension_state = msg.data
 
     def _path_callback(self, msg):
         if len(msg.poses) == 0:
-            self.get_logger().warn('Received empty path')
+            self.get_logger().warn('_path_callback: Received empty path')
             return
 
         new_target_idx = 1
         if new_target_idx >= len(msg.poses):
-            self.get_logger().warn('Path too short after skipping first point')
+            self.get_logger().warn('_path_callback: Path too short after skipping first point')
             return
 
         if self.current_path is not None and self.have_path:
@@ -155,45 +152,33 @@ class TrackerNode(Node):
                     return
 
         self.current_path = msg
-        self.get_logger().info(f'Received path with {len(msg.poses)} points')
-        # self.get_logger().info(f'Before map origin offset:')
-        # Log each point after applying map origin offset
+        self.get_logger().info(f'_path_callback: Received path with {len(msg.poses)} points')
         for i in range(len(self.current_path.poses)):
             ox = self.current_path.poses[i].pose.position.x
             oy = self.current_path.poses[i].pose.position.y
-            ori = yaw_from_quaternion(self.current_path.poses[i].pose.orientation)
-            self.get_logger().info(f'Path point {i}: x={ox:.3f}, y={oy:.3f}, yaw={math.degrees(ori)} deg')
-        # self.get_logger().info(f'After map origin offset:')
-        # for i in range(len(self.current_path.poses)):
-        #     self.current_path.poses[i].pose.position.x += self.map_origin[0]
-        #     self.current_path.poses[i].pose.position.y += self.map_origin[1]
-        #     # Log each point after applying map origin offset
-        #     px = self.current_path.poses[i].pose.position.x
-        #     py = self.current_path.poses[i].pose.position.y
-        #     self.get_logger().info(f'Path point {i}: x={px:.3f}, y={py:.3f}')
+            ori = self._normalize_angle(yaw_from_quaternion(self.current_path.poses[i].pose.orientation))
+            self.get_logger().info(f'_path_callback: Path point {i}: x={ox:.3f}, y={oy:.3f}, yaw={math.degrees(ori)} deg')
 
         self.current_target_index   = new_target_idx
         self.have_path              = True
-        self._move_first_iteration = True
-        self.state                  = self.TURN
+        self.state                  = self.HOLD
         self._reset_pids()
         self._read_target_yaw()
         self._publish_direction()
         self.yaw_pub.publish(Float32(data=math.degrees(self.target_yaw)))
+        self.get_logger().info(f'_path_callback: new_idx={self.current_target_index} '
+            f'total={len(self.current_path.poses)}, entering HOLD')
 
     def _odom_callback_with_transform(self, msg):
-        current_pose = [0, 0, 0, 0, 0, 0, 0]
-        current_pose = [msg.pose.pose.position.x, msg.pose.pose.position.y, msg.pose.pose.position.z, msg.pose.pose.orientation.x, msg.pose.pose.orientation.y, msg.pose.pose.orientation.z, msg.pose.pose.orientation.w]
+        current_pose = [msg.pose.pose.position.x, msg.pose.pose.position.y, msg.pose.pose.position.z, 
+                        msg.pose.pose.orientation.x, msg.pose.pose.orientation.y, msg.pose.pose.orientation.z, msg.pose.pose.orientation.w]
         transformer = PoseTransformerQuat()
         new_pose = transformer.apply_matrix_to_pose(current_pose, self.T)
-        self.current_pos[0] = new_pose[0] - self.T[0][3]
+        self.current_pos[0] = new_pose[0]
         self.current_pos[1] = new_pose[1]
         self.current_pos[2] = new_pose[2]
         self.quaterion = new_pose[3:8]
-        self.current_yaw = yaw_from_quaternion(self.quaterion) + np.pi
-        # self.get_logger().warn(f"""
-        # yaw:{self.current_yaw}
-        # """)
+        self.current_yaw = self._normalize_angle(yaw_from_quaternion(self.quaterion) + np.pi)
         self.have_odom = True
         
     def _odom_callback(self, msg):
@@ -206,33 +191,34 @@ class TrackerNode(Node):
             msg.pose.pose.orientation.z,
             msg.pose.pose.orientation.w
         ]
-        self.current_yaw = yaw_from_quaternion(self.quaterion)
+        self.current_yaw = self._normalize_angle(yaw_from_quaternion(self.quaterion))
         self.have_odom = True
 
     def _can_go_callback(self, msg):
-        self.prev_can_go = self.can_go
         self.can_go = msg.data
 
     def _read_target_yaw(self):
         if self.current_path is None or self.current_target_index >= len(self.current_path.poses): return
-        self.target_yaw = yaw_from_quaternion(self.current_path.poses[self.current_target_index].pose.orientation)
+        self.target_yaw = self._normalize_angle(yaw_from_quaternion(self.current_path.poses[self.current_target_index].pose.orientation))
 
     def _reset_pids(self):
         self.pid_angle.reset(); self.pid_dist.reset()
 
     def _publish_direction(self):
-        diff      = self._normalize_angle(self.target_yaw - self.current_yaw)
-        diff_deg  = math.degrees(diff)
-        if diff_deg > 2.0:
-            direction = -1
-        elif diff_deg < -2.0:
-            direction = 1
-        else:
-            direction = 0
+        if self._p("motion_type")=="unidirectional":
+             self.dir_pub.publish(Int32(data=0))
+             self.get_logger().info(f'_publish_direction: motion_type=unidirectional, force direction=0')
+             return
+         
+        direction = 0
+        tar_yaw_deg  = math.degrees(self.target_yaw)
+        if tar_yaw_deg > 2.0: direction = -1
+        elif tar_yaw_deg < -2.0: direction = 1
+        else: direction = 0
         self.dir_pub.publish(Int32(data=direction))
         self.get_logger().info(
-            f'PUBLISH direction={direction} '
-            f'target_yaw_deg={math.degrees(self.target_yaw):.2f} diff={diff_deg:.2f}'
+            f'_publish_direction: motion_type={self.motion_type}, target_yaw={tar_yaw_deg:.1f} deg, '
+            f'direction={direction}'
         )
 
     def _normalize_angle(self, angle):
@@ -248,19 +234,17 @@ class TrackerNode(Node):
 
     def _move_to_next_target(self):
         self.current_target_index += 1
-        self.can_go      = False
-        self.prev_can_go = False
+        self.can_go = False
         self.get_logger().info(
             f'_move_to_next_target: new_idx={self.current_target_index} '
-            f'total={len(self.current_path.poses)}, waiting for can_go'
+            f'total={len(self.current_path.poses)}, entering HOLD'
         )
         if self.current_target_index >= len(self.current_path.poses):
-            self.get_logger().info('All targets reached, stopping')
+            self.get_logger().info('_move_to_next_target: All targets reached, stopping')
             return False
-        self.target_yaw = yaw_from_quaternion(self.current_path.poses[self.current_target_index].pose.orientation)
+        self._read_target_yaw()
         self._reset_pids()
-        if self._p("motion_type")=="omnidirectional":self.state=self.HOLD
-        else: self.state = self.TURN
+        self.state=self.HOLD
         self._publish_direction()
         self.yaw_pub.publish(Float32(data=math.degrees(self.target_yaw)))
         return True
@@ -276,10 +260,8 @@ class TrackerNode(Node):
             self.have_path = False
             return
 
-        if self.motion_type == 'omnidirectional':
-            self._control_omni(target)
-        else:
-            self._control_uni(target)
+        if self.motion_type == 'omnidirectional': self._control_omni(target)
+        else: self._control_uni(target)
 
     # =======================================================================
     #  单向模式
@@ -288,40 +270,14 @@ class TrackerNode(Node):
         
         dt = 1.0 / self.control_frequency
 
-        if self.state == self.TURN:
-            
-            self._read_target_yaw()
-            angle_error = self._normalize_angle(self.target_yaw - self.current_yaw)
-            
-            if abs(angle_error) < 0.05:
-                self.state = self.HOLD
-                self.can_go = False
-                self.prev_can_go = False
-                self._reset_pids()
-                self.get_logger().info('Angle aligned, entering HOLD')
-                return
-                        
-            vel_angle = self.pid_angle.compute(angle_error, dt)
-            vel_angle = max(-self._p('max_angular'), min(self._p('max_angular'), vel_angle))
-            self._publish_cmd(0.0, 0.0, vel_angle)
-            
-            self.get_logger().info(
-                f'TURN: pos=({self.current_pos[0]:.2f},{self.current_pos[1]:.2f}) angle={math.degrees(self.current_yaw):.1f} deg '
-                f'target=({target[0]:.2f},{target[1]:.2f}) angle={math.degrees(self.target_yaw):.1f} deg '
-                f'angle_err={math.degrees(abs(angle_error)):.3f}'
-            )
-            return
-
-        elif self.state == self.HOLD:
+        if self.state == self.HOLD:
             
             self._stop()
             
             if self.can_go:
                 self.state = self.MOVE
-                self._move_first_iteration = True
                 self._reset_pids()
-                # self._move_start_pos = self.current_pos[:2].copy()
-                self.get_logger().info('can_go=True, entering MOVE')
+                self.get_logger().info('HOLD: can_go=True, entering MOVE')
             return
 
         elif self.state == self.MOVE:
@@ -338,7 +294,9 @@ class TrackerNode(Node):
             dis_side = -math.hypot(dy,dx)*math.sin(theta)
 
             # 终止条件检测
-            arrived = abs(dis_forward) < self.arrive_threshold and abs(dis_side) < self.arrive_threshold
+            arrived = abs(dis_forward) < self.arrive_threshold and \
+                      abs(dis_side) < self.arrive_threshold and \
+                      abs(angle_error) < self.angle_threshold
             if arrived:
                 self.get_logger().info(
                     f'MOVE: arrived! idx={self.current_target_index}/'
@@ -352,7 +310,7 @@ class TrackerNode(Node):
             
             # 未到终点，进行修正，将位置修正与角度修正分开处理
             vel_forward,vel_side,vel_angle = 0,0,0
-            if abs(angle_error) > self.angle_threshold :#and self.suspension_state == 0:
+            if abs(angle_error) >= self.angle_threshold and self.suspension_state in [0,14,21]:
                 vel_angle = self.pid_angle.compute(angle_error, dt)
                 if vel_angle > 0: vel_angle = max(0.15, min(self._p('max_angular'), vel_angle))
                 elif vel_angle < 0: vel_angle = min(-0.15, max(-self._p('max_angular'), vel_angle))
@@ -377,7 +335,7 @@ class TrackerNode(Node):
 
             self.get_logger().info(
                 f'MOVE: pos={self.current_pos[0]:.2f},{self.current_pos[1]:.2f},{math.degrees(self.current_yaw):.1f} deg '
-                f'target={target[0]:.2f},{target[1]:.2f}, {math.degrees(self.target_yaw):.1f} deg '
+                f'target={target[0]:.2f},{target[1]:.2f},{math.degrees(self.target_yaw):.1f} deg '
                 f'err={dx:.2f},{dy:.2f},{math.degrees(angle_error):.2f} deg '
                 f'to_path={dis_forward:.2f},{dis_side:.2f},{math.degrees(theta):.2f} deg '
                 f'vel={vel_forward:.3f},{vel_side:.3f},{vel_angle:.3f}'
@@ -390,19 +348,14 @@ class TrackerNode(Node):
             
         dt = 1.0 / self.control_frequency
         
-        if self.state == self.TURN:
-            self.state=self.HOLD
-
-        elif self.state == self.HOLD:
+        if self.state == self.HOLD:
             
             self._stop()
             
             if self.can_go:
                 self.state = self.MOVE
-                self._move_first_iteration = True
                 self._reset_pids()
-                # self._move_start_pos = self.current_pos[:2].copy()
-                self.get_logger().info('can_go=True, entering MOVE')
+                self.get_logger().info('HOLD: can_go=True, entering MOVE')
             return
 
         elif self.state == self.MOVE:
@@ -414,7 +367,9 @@ class TrackerNode(Node):
             angle_error = self._normalize_angle(-self.current_yaw)
 
             # 终止条件检测
-            arrived = abs(dx) < self.arrive_threshold and abs(dy) < self.arrive_threshold
+            arrived = abs(dx) < self.arrive_threshold and \
+                      abs(dy) < self.arrive_threshold and \
+                      abs(angle_error) < self.angle_threshold
             if arrived:
                 self.get_logger().info(
                     f'MOVE: arrived! idx={self.current_target_index}/'
@@ -428,7 +383,7 @@ class TrackerNode(Node):
             
             # 未到终点，进行修正，将位置修正与角度修正分开处理
             vel_x,vel_y,vel_angle = 0,0,0
-            if abs(angle_error) > self.angle_threshold :#and self.suspension_state == 0:
+            if abs(angle_error) >= self.angle_threshold and self.suspension_state in [0,14,21]:
                 vel_angle = self.pid_angle.compute(angle_error, dt)
                 if vel_angle > 0: vel_angle = max(0.15, min(self._p('max_angular'), vel_angle))
                 elif vel_angle < 0: vel_angle = min(-0.15, max(-self._p('max_angular'), vel_angle))
@@ -453,7 +408,7 @@ class TrackerNode(Node):
 
             self.get_logger().info(
                 f'MOVE: pos={self.current_pos[0]:.2f},{self.current_pos[1]:.2f},{math.degrees(self.current_yaw):.1f} deg '
-                f'target={target[0]:.2f},{target[1]:.2f}, {math.degrees(self.target_yaw):.1f} deg '
+                f'target={target[0]:.2f},{target[1]:.2f},{math.degrees(self.target_yaw):.1f} deg '
                 f'err={dx:.2f},{dy:.2f},{math.degrees(angle_error):.2f} deg '
                 f'vel={vel_x:.3f},{vel_y:.3f},{vel_angle:.3f}'
             )
@@ -461,10 +416,7 @@ class TrackerNode(Node):
     def _stop(self):
         self._publish_cmd(0.0, 0.0, 0.0)
 
-    def _publish_cmd(self, vx, vy, vyaw):
-        msg = Float32MultiArray()
-        msg.data = [float(vx), float(vy), float(vyaw)]
-        self.cmd_pub.publish(msg)
+
 
 
 def main(args=None):
