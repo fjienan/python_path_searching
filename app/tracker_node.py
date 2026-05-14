@@ -1,22 +1,14 @@
 #!/usr/bin/env python3
 """
-轨迹跟踪节点（逐段 PID 控制 + 直线闭环校正）
+轨迹跟踪节点
 
 状态机流程：
-  单向模式：TURN → HOLD → MOVE → TURN → ...
-           - TURN: 转到目标角度（can_go 不影响）
+  单向/全向模式：HOLD → MOVE → HOLD → ...
            - HOLD: 停在关键点，等 can_go=True 才继续
-           - MOVE: 直线前进到目标点，实时校正偏离直线误差
+           - MOVE: 角度大于阈值时先修正，直线前进到目标点，实时校正偏离直线误差、角度误差
 
-  全向模式：TURN → HOLD → MOVE → TURN → ...
-           - TURN: 转到目标角度，转向与平移完全分开
-           - HOLD: 停在关键点，等 can_go=True 才继续
-           - MOVE: 直线移动到目标点，vy 侧向 PID 校正
+  全向模式获得的路径无需旋转对齐，直接控制 x/y 轴速度即可；单向模式需要先旋转对齐，再控制前进速度，侧向误差较大时也会进行侧向修正。
 
-直线闭环原理：
-  记录进入 MOVE 时的起点 pos_start 和目标 target，计算理想路径方向向量 d_path。
-  将当前位置 pos 投影到这条直线上得到 pos_proj，计算侧向误差 lateral_err = |pos - pos_proj|_⊥。
-  侧向误差超过 lateral_threshold 时，施加 PID 校正力将机器人拉回直线。
 """
 
 import rclpy
