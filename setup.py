@@ -24,7 +24,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            'astar_planner_node = app.astar_planner_node:main',
+            'dfs_planner_node = app.dfs_planner_node:main',
             'tracker_node = app.tracker_node:main',
             'odom_simulator = app.odom_simulator:main',
             'path_decision_node = app.path_decision_node:main',

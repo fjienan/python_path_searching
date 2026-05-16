@@ -83,6 +83,12 @@ class TrackerNode(Node):
         self.have_odom             = False
         self.can_go                = False
         self.angle_ready           = False
+        self.T = np.array([
+        [-1.0, 0.0, 0.0, 0.38],
+        [0.0,  -1.0, 0.0, 0.0],
+        [0.0,  0.0, 1.0, 0.0],
+        [0.0,  0.0, 0.0, 1.0]
+        ])
         # 直线闭环状态变量
         self._move_start_pos = np.array([0.0, 0.0])
 
@@ -168,10 +174,22 @@ class TrackerNode(Node):
         self.yaw_pub.publish(Float32(data=math.degrees(self.target_yaw)))
         self.get_logger().info(f'_path_callback: new_idx={self.current_target_index} '
             f'total={len(self.current_path.poses)}, entering HOLD')
+
+    def _odom_callback_with_transform(self, msg):
+        current_pose = [msg.pose.pose.position.x, msg.pose.pose.position.y, msg.pose.pose.position.z, 
+                        msg.pose.pose.orientation.x, msg.pose.pose.orientation.y, msg.pose.pose.orientation.z, msg.pose.pose.orientation.w]
+        transformer = PoseTransformerQuat()
+        self.quaterion = new_pose[3:8]
+        self.current_yaw = self._normalize_angle(yaw_from_quaternion(self.quaterion) + np.pi)
+        new_pose = transformer.apply_matrix_to_pose(current_pose, self.T)
+        self.current_pos[0] = new_pose[0] - self.T[0][3]*math.cos(self.current_yaw)
+        self.current_pos[1] = new_pose[1] + self.T[0][3]*math.sin(self.current_yaw)
+        self.current_pos[2] = new_pose[2]
+        self.have_odom = True
         
     def _odom_callback(self, msg):
         self.current_pos[0] = msg.pose.pose.position.x
-        self.current_pos[1] = msg.pose.pose.position.y
+        self.current_pos[1] = msg.pose.pose.position.y                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              
         self.current_pos[2] = msg.pose.pose.position.z
         self.quaterion = [
             msg.pose.pose.orientation.x,
@@ -181,6 +199,7 @@ class TrackerNode(Node):
         ]
         self.current_yaw = self._normalize_angle(yaw_from_quaternion(self.quaterion))
         self.have_odom = True
+
     def _can_go_callback(self, msg):
         self.can_go = msg.data
 
