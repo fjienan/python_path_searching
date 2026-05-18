@@ -1,6 +1,6 @@
 # Python Path Searching
 
-基于 ROS2 的森林搜索路径规划系统，使用 A* 算法进行全局路径规划，逐段 PID 控制实现路径跟踪。
+基于 ROS2 的森林搜索路径规划系统，使用 DFS 算法进行全局路径规划，逐段 PID 控制实现路径跟踪。
 
 ## 项目结构
 
@@ -11,15 +11,17 @@ ros2 topic pub /can_go std_msgs/msg/Bool "data: true"
 ```
 python_path_searching/
 ├── core/                    # 核心算法和工具类
-│   ├── astar.py            # A* 路径规划算法
+│   ├── astar.py            # A* 路径规划算法（已弃用）
+|   ├── dfs.py              # DFS 路径规划算法
 │   ├── grid_utils.py       # 网格坐标转换工具
 │   ├── pid_controller.py   # PID 控制器
 │   └── transform_utils.py   # 坐标变换工具（四元数/欧拉角）
 │
 ├── app/                     # ROS2 节点（主程序）
-│   ├── astar_planner_node.py    # A* 路径规划节点
+│   ├── astar_planner_node.py    # A* 路径规划节点（已弃用）
+│   ├── dfs_planner_node.py      # DFS 路径规划节点
 │   ├── tracker_node.py          # 轨迹跟踪节点（统一节点）
-│   ├── path_decision_node.py    # 路径决策节点
+│   ├── path_decision_node.py    # 路径决策节点（已弃用）
 │   └── odom_simulator.py        # 里程计模拟器
 │
 ├── config/
@@ -47,20 +49,15 @@ path_decision_node → /can_go (关键点处是否允许通过)
 
 ### 状态机流程
 
-**单向模式 (unidirectional)**
-```
-TURN → HOLD → MOVE → TURN → ...
-- TURN : 转到目标角度（can_go 不影响）
-- HOLD : 停在关键点，等 can_go=True 才继续
-- MOVE : 前进到目标点，偏离角度则切回 TURN
-```
+轨迹跟踪节点
 
-**全向模式 (omnidirectional)**
-```
-MOVE → HOLD → MOVE → ...
-- MOVE : X/Y/Yaw 独立 PID 控制
-- HOLD : 停在关键点，等 can_go=True 才继续
-```
+状态机流程：
+  单向/全向模式：HOLD → MOVE → ADJ(if precision needed) → HOLD(if can_go required) → MOVE...
+           - HOLD: 停在关键点，等 can_go=True 才继续
+           - MOVE: 角度大于阈值时先修正，直线前进到目标点，实时校正偏离直线误差、角度误差（阈值较大）
+           - ADJ: 如需精细化对齐才进入（阈值较小），如果在某点不需要抓取kfs操作则不会进入 ADJ，以加快运行速度。
+
+  全向模式获得的路径无需旋转对齐，直接控制 x/y 轴速度即可；单向模式需要先旋转对齐，再控制前进速度，侧向误差较大时也会进行侧向修正。
 
 ## 节点说明
 

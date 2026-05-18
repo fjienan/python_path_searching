@@ -149,8 +149,18 @@ class DFSPlannerNode(Node):
         path_msg.header.frame_id = 'map'
         path_msg.header.stamp = self.get_clock().now().to_msg()
 
+        if not steps:
+            self.path_pub.publish(path_msg)
+            return
+
+        start_x, start_y = self.grid_converter.grid_to_map(steps[0].x, steps[0].y)
+
         for i, step in enumerate(steps):
             x, y = self.grid_converter.grid_to_map(step.x, step.y)
+
+            # 以初始位置为原点
+            x -= start_x
+            y -= start_y
 
             # 方向转为弧度计算
             now_yaw = 0
