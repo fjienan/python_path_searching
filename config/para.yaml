@@ -29,8 +29,10 @@
     control_frequency: 100.0
     arrive_threshold:  0.12      # 判定到达目标的距离阈值 (m)
     angle_threshold:   0.05     # 判定角度对齐的阈值 (rad)
-    arrive_precise_threshold:  0.01      # 判定到达目标的距离阈值 (m)
-    angle_precise_threshold:   0.02     # 判定角度对齐的阈值 (rad)
+    arrive_precise_threshold:  0.01      # KFS精调距离阈值 (m)
+    angle_precise_threshold:   0.02     # KFS精调角度阈值 (rad)
+    arrive_mid_threshold:      0.05      # 普通点中调距离阈值 (m)
+    angle_mid_threshold:       0.04     # 普通点中调角度阈值 (rad)
 
     # ---------- PID ----------
     kp_angle: 2.5
@@ -56,13 +58,14 @@
     # -------------------- Topics --------------------
     kfs_grid_data:        '/kfs_grid_data'
     planning_path:        '/planning/path'
+    planning_path_meta:   '/planning/path_meta'
     can_go:               '/can_go'
     planning_direction:   '/planning/direction'
     planning_trigger:     '/task/trigger'
-    odom_world:           '/odin1/odometry_highfreq'
-    # odom_world:         '/odom_world'
-    cmd_vel:              '/t0x0101_'
-    # scmd_vel:            '/cmd_vel'
+    # odom_world:           '/odin1/odometry_highfreq'
+    odom_world:         '/odom_world'
+    # cmd_vel:              '/t0x0101_'
+    cmd_vel:            '/cmd_vel'
     tracker_direction:    '/direction'
     target_yaw_deg:       '/target_yaw_deg'
     suspension_state:     '/current_state'
@@ -72,5 +75,5 @@
     base_frame:    'base_link'
     publish_rate:  50.0
 
-    # -------------------- A* Planner --------------------
+    # -------------------- DFS Planner --------------------
     max_r2kfs_count: 2

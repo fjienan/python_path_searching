@@ -9,18 +9,7 @@ DFS路径规划节点 - 简化版
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String
-from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSHistoryPolicy, QoSReliabilityPolicy
-import json
-import numpy as np
-
-# 假设你的DFSPlanner写在 core.dfs 中
-from core.dfs import DFSPlanner
-from core.step import Step
-
-import rclpy
-from rclpy.node import Node
-from std_msgs.msg import String
+from std_msgs.msg import String, Int32MultiArray
 from nav_msgs.msg import Path, Odometry
 from geometry_msgs.msg import PoseStamped
 from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSHistoryPolicy, QoSReliabilityPolicy
@@ -71,8 +60,13 @@ class DFSPlannerNode(Node):
         self.kfs_grid = np.zeros((self.GRID_ROWS, self.GRID_COLS), dtype=int)
         
 
-        kfs_topic = self.declare_parameter('kfs_grid_data', '/kfs_grid_data').value
-        path_topic = self.declare_parameter('planning_path', '/planning/path').value
+        self.declare_parameter('planning_path', '/planning/path')
+        self.declare_parameter('planning_path_meta', '/planning/path_meta')
+        self.declare_parameter('kfs_grid_data', '/kfs_grid_data')
+
+        path_topic = self.get_parameter('planning_path').value
+        meta_topic = self.get_parameter('planning_path_meta').value
+        kfs_topic = self.get_parameter('kfs_grid_data').value
 
         qos_profile = QoSProfile(
             reliability=QoSReliabilityPolicy.RELIABLE,
@@ -93,6 +87,7 @@ class DFSPlannerNode(Node):
             durability=QoSDurabilityPolicy.TRANSIENT_LOCAL
         )
         self.path_pub = self.create_publisher(Path, path_topic, path_qos)
+        self.meta_pub = self.create_publisher(Int32MultiArray, meta_topic, path_qos)
 
         self.get_logger().info('DFS Planner Node started (Simplified)')
 
@@ -126,7 +121,6 @@ class DFSPlannerNode(Node):
                     elif step.yaw ==2: now_yaw = -math.pi/2
                     self.get_logger().info(f'  Step {i+1}/{len(self.path[0])}: x={step.x}, y={step.y}, yaw={math.degrees(now_yaw)}, require_can_go={step.require_can_go}, send_can_do={step.send_can_do}')
                 
-                # 发布路径
                 self.publish_path(self.path[0])
 
         except json.JSONDecodeError as e:
@@ -141,45 +135,49 @@ class DFSPlannerNode(Node):
         empty_path.header.stamp = self.get_clock().now().to_msg()
         self.path_pub.publish(empty_path)
 
-    def publish_path(self, steps):
-        """发布路径（将grid索引转换为以此为起始原点的物理坐标）"""
-        self.delete_path()
+    def _step_to_meta(self, step):
+        if step.send_can_do:
+            return 1
+        if step.require_can_go:
+            return 2
+        return 0
 
+    def publish_path(self, steps):
         path_msg = Path()
         path_msg.header.frame_id = 'map'
         path_msg.header.stamp = self.get_clock().now().to_msg()
 
+        meta_msg = Int32MultiArray()
+        meta_data = [self._step_to_meta(s) for s in steps]
+
         if not steps:
             self.path_pub.publish(path_msg)
+            meta_msg.data = meta_data
+            self.meta_pub.publish(meta_msg)
             return
 
         start_x, start_y = self.grid_converter.grid_to_map(steps[0].x, steps[0].y)
 
         for i, step in enumerate(steps):
             x, y = self.grid_converter.grid_to_map(step.x, step.y)
-
-            # 以初始位置为原点
             x -= start_x
             y -= start_y
 
-            # 方向转为弧度计算
             now_yaw = 0
-            if step.y == 0: 
+            if step.y == 0:
                 now_yaw = 0
-            elif step.yaw == 1: 
+            elif step.yaw == 1:
                 now_yaw = math.pi/2
-            elif step.yaw == 2: 
+            elif step.yaw == 2:
                 now_yaw = -math.pi/2
 
             pose = PoseStamped()
             pose.header.frame_id = 'map'
             pose.header.stamp = path_msg.header.stamp
-            # x y
             pose.pose.position.x = float(x)
             pose.pose.position.y = float(y)
             pose.pose.position.z = 0.0
 
-            # raw -> 四元数
             half_yaw = now_yaw * 0.5
             pose.pose.orientation.w = math.cos(half_yaw)
             pose.pose.orientation.z = math.sin(half_yaw)
@@ -189,7 +187,9 @@ class DFSPlannerNode(Node):
             path_msg.poses.append(pose)
 
         self.path_pub.publish(path_msg)
-        self.get_logger().info(f'Published new path with {len(path_msg.poses)} poses')
+        meta_msg.data = meta_data
+        self.meta_pub.publish(meta_msg)
+        self.get_logger().info(f'Published path ({len(path_msg.poses)} poses) + meta: {meta_data}')
 
 def main(args=None):
     rclpy.init(args=args)
