@@ -29,14 +29,19 @@ from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSHistoryPolicy, QoSReli
 import json
 import numpy as np
 from core.step import Step
+from core.grid_utils import GridConverter
 
 class DFSPlanner:
-    def __init__(self, grid_cols, grid_rows, logger=None):
+    def __init__(self, grid_cols, grid_rows, start_x, start_y, grid_converter, logger=None):
         self.logger = logger
         self.GRID_ROWS = grid_rows
         self.GRID_COLS = grid_cols
-        self.DIRCTIONS = [(1, 0, 0), (0, 1, 1), (0, -1, 2)] 
+        self.initial_pos_x = start_x
+        self.initial_pos_y = start_y
+        self.logger.info(f'start position ({self.initial_pos_x}, {self.initial_pos_y})')
+        self.DIRCTIONS = [(1, 0, 0), (0, 1, math.pi/2), (0, -1, -math.pi/2)] 
         self.GRID = np.zeros((self.GRID_ROWS+2, self.GRID_COLS), dtype=int)
+        self.RESERVERED_LENGTH = 0.2
         self.visited = np.zeros((self.GRID_ROWS+2, self.GRID_COLS), dtype=bool)
         self.path = [[],[],[],[]]
         self.cnt_path = []
@@ -46,6 +51,8 @@ class DFSPlanner:
         self.TURN_COST = 2
         self.ADJACENT_COST = 1
         self.FETCH_KFS2_COST = 6
+        
+        self.grid_converter = grid_converter
     
     def plan_path(self, grid, stx, sty):
         """DFS路径规划算法实现"""
@@ -66,7 +73,7 @@ class DFSPlanner:
             else:
                 if len(self.path[2][0][3]) < len(self.path[3][0][3]):
                     return self.path[2][0]
-                elif len(self.path[2][0][3]) > len(self.path[3][0][3]):
+                elif len(self.path[2][0][3]) < len(self.path[3][0][3]):
                     return self.path[3][0]
                 else:
                     return self.path[2][0]
@@ -101,6 +108,12 @@ class DFSPlanner:
         for step in src:
             dst.append(Step(step.x, step.y, step.yaw, step.require_can_go, step.send_can_do))
     
+    def _get_dir_idx(self, yaw):
+        if abs(yaw-0)<1e-6: return 0
+        elif abs(yaw-math.pi/2)<1e-6: return 1
+        elif abs(yaw+math.pi/2)<1e-6: return 2
+        return 0
+
     def _evaluate_path(self):
         grid_cnt = self.GRID.copy()
         #self.logger.info(f'{grid_cnt}')
@@ -108,34 +121,39 @@ class DFSPlanner:
         #for step in self.eval_path:
             #self.logger.info(f'step: x={step.x}, y={step.y}, yaw={step.yaw}, require_can_go={step.require_can_go}, send_can_do={step.send_can_do}')
         for step in self.eval_path:
-            if grid_cnt[step.x][step.y] == 2:
-                kfs2_on_the_way.append([step.x, step.y])
-                grid_cnt[step.x][step.y] = 0
+            nowX, nowY = round(step.x), round(step.y)
+            if grid_cnt[nowX][nowY] == 2:
+                kfs2_on_the_way.append([nowX, nowY])
+                grid_cnt[nowX][nowY] = 0
                 
         if len(kfs2_on_the_way) == 4: return
         
         kfs2_by_the_way = []
         for step in self.eval_path:
-            if 0<= step.x+self.DIRCTIONS[step.yaw][0] <= 5 and 0<= step.y+self.DIRCTIONS[step.yaw][1] <= 2:
-                if grid_cnt[step.x+self.DIRCTIONS[step.yaw][0]][step.y+self.DIRCTIONS[step.yaw][1]] == 2:
-                    kfs2_by_the_way.append([step.x+self.DIRCTIONS[step.yaw][0], step.y+self.DIRCTIONS[step.yaw][1]])
-                    grid_cnt[step.x+self.DIRCTIONS[step.yaw][0]][step.y+self.DIRCTIONS[step.yaw][1]] = 0
+            now_dir = self._get_dir_idx(step.yaw)
+            nowX, nowY = round(step.x), round(step.y)
+            if 0<= nowX+self.DIRCTIONS[now_dir][0] <= 5 and 0<= nowY+self.DIRCTIONS[now_dir][1] <= 2:
+                if grid_cnt[nowX+self.DIRCTIONS[now_dir][0]][nowY+self.DIRCTIONS[now_dir][1]] == 2:
+                    kfs2_by_the_way.append([nowX+self.DIRCTIONS[now_dir][0], nowY+self.DIRCTIONS[now_dir][1]])
+                    grid_cnt[nowX+self.DIRCTIONS[now_dir][0]][nowY+self.DIRCTIONS[now_dir][1]] = 0
         
         kfs2_can_get = []
         for step in self.eval_path:
+            nowX, nowY = round(step.x), round(step.y)
             for direction in self.DIRCTIONS:
-                if 0<= step.x+direction[0] <= 5 and 0<= step.y+direction[1] <= 2:
-                    if grid_cnt[step.x+direction[0]][step.y+direction[1]] == 2:
-                        kfs2_can_get.append([step.x+direction[0], step.y+direction[1]])
-                        grid_cnt[step.x+direction[0]][step.y+direction[1]] = 0
+                if 0<= nowX+direction[0] <= 5 and 0<= nowY+direction[1] <= 2:
+                    if grid_cnt[nowX+direction[0]][nowY+direction[1]] == 2:
+                        kfs2_can_get.append([nowX+direction[0], nowY+direction[1]])
+                        grid_cnt[nowX+direction[0]][nowY+direction[1]] = 0
         
         if len(kfs2_on_the_way) + len(kfs2_by_the_way) + len(kfs2_can_get) < 2: return
         
         kfs1_on_the_way = []
         for step in self.eval_path:
-            if grid_cnt[step.x][step.y] == 1:
-                kfs1_on_the_way.append([step.x-1, step.y])
-                grid_cnt[step.x][step.y] = 0
+            nowX, nowY = round(step.x), round(step.y)
+            if grid_cnt[nowX][nowY] == 1:
+                kfs1_on_the_way.append([nowX-1, nowY])
+                grid_cnt[nowX][nowY] = 0
         
         cost=0
         kfs2_needed=0
@@ -153,33 +171,76 @@ class DFSPlanner:
             kfs2_can_get.pop()
         kfs2_needed = len(kfs2_on_the_way) + kfs2_by_the_way_needed + kfs2_can_get_needed
         
+
+
         pub_path = []
+        start_x_to_origin, start_y_to_origin = self.grid_converter.grid_to_map(round(self.eval_path[0].x-1), round(self.eval_path[0].y))
+        # self.logger.info(f'start_x_to_origin={start_x_to_origin}, start_y_to_origin={start_y_to_origin}')
+        start_x_to_r2 = start_x_to_origin + self.initial_pos_x
+        start_y_to_r2 = start_y_to_origin + self.initial_pos_y
         for i in range(len(self.eval_path)):
             step = self.eval_path[i]
-            if i==0: pub_path.append(Step(step.x-1, step.y, step.yaw, True, step.send_can_do))
-            else: pub_path.append(Step(step.x-1, step.y, step.yaw, False, step.send_can_do))
+            nowX, nowY = self.grid_converter.grid_to_map(round(step.x-1), round(step.y))
+            nowX_to_r2 = nowX - start_x_to_origin + self.initial_pos_x
+            nowY_to_r2 = nowY - start_y_to_origin + self.initial_pos_y
+            # self.logger.info(f'nowX_to_r2={nowX_to_r2}, nowY_to_r2={nowY_to_r2}')
+            nowX_to_r2_consider_yaw = nowX_to_r2-math.cos(step.yaw)*self.RESERVERED_LENGTH
+            nowY_to_r2_consider_yaw = nowY_to_r2-math.sin(step.yaw)*self.RESERVERED_LENGTH
+            if i==0: pub_path.append(Step(nowX_to_r2_consider_yaw, nowY_to_r2_consider_yaw, step.yaw, True, step.send_can_do))
+            else: pub_path.append(Step(nowX_to_r2_consider_yaw, nowY_to_r2_consider_yaw, step.yaw, False, step.send_can_do))
 
             exStep=[]
             flag1=False
             flag2=False
             next_step = self.eval_path[i+1] if i+1<len(self.eval_path) else None
-            if len(kfs2_on_the_way)>0 and next_step is not None and kfs2_on_the_way[0] == [next_step.x, next_step.y]:
-                exStep.append(Step(step.x-1, step.y, next_step.yaw, False, True))
+            if len(kfs2_on_the_way)>0 and next_step is not None and kfs2_on_the_way[0] == [round(next_step.x), round(next_step.y)]:
+                nexX_to_r2_consider_yaw = nowX_to_r2-math.cos(next_step.yaw)*self.RESERVERED_LENGTH
+                nexY_to_r2_consider_yaw = nowY_to_r2-math.sin(next_step.yaw)*self.RESERVERED_LENGTH
+                exStep.append(Step(nexX_to_r2_consider_yaw, nexY_to_r2_consider_yaw, next_step.yaw, False, True))
                 kfs2_on_the_way.pop(0)
                 flag1=True
-            if len(kfs2_by_the_way)>0 and 0<= step.x+self.DIRCTIONS[step.yaw][0] <= 5 and 0<= step.y+self.DIRCTIONS[step.yaw][1] <= 2:
-                if kfs2_by_the_way[0] == [step.x+self.DIRCTIONS[step.yaw][0], step.y+self.DIRCTIONS[step.yaw][1]]:
-                    exStep.insert(0, Step(step.x-1, step.y, step.yaw, False, True))
+            now_dir = self._get_dir_idx(step.yaw)
+            if len(kfs2_by_the_way)>0 and 0 <= round(step.x)+self.DIRCTIONS[now_dir][0] <= 5 and 0<= round(step.y)+self.DIRCTIONS[now_dir][1] <= 2:
+                if kfs2_by_the_way[0] == [round(step.x)+self.DIRCTIONS[now_dir][0], round(step.y)+self.DIRCTIONS[now_dir][1]]:
+                    exStep.insert(0, Step(nowX_to_r2_consider_yaw, nowY_to_r2_consider_yaw, step.yaw, False, True))
                     kfs2_by_the_way.pop(0)
                     flag2=True
             for direction in self.DIRCTIONS:
-                if len(kfs2_can_get)>0 and 0<= step.x+direction[0] <= 5 and 0<= step.y+direction[1] <= 2:
-                    if kfs2_can_get[0] == [step.x+direction[0], step.y+direction[1]]:
-                        if(flag1 and (not flag2)):exStep.insert(0, Step(step.x-1, step.y, direction[2], False, True))
-                        else: exStep.append(Step(step.x-1, step.y, direction[2], False, True))
+                if len(kfs2_can_get)>0 and 0<= round(step.x)+direction[0] <= 5 and 0<= round(step.y)+direction[1] <= 2:
+                    if kfs2_can_get[0] == [round(step.x)+direction[0], round(step.y)+direction[1]]:
+                        nexX_to_r2_consider_yaw = nowX_to_r2-math.cos(direction[2])*self.RESERVERED_LENGTH
+                        nexY_to_r2_consider_yaw = nowY_to_r2-math.sin(direction[2])*self.RESERVERED_LENGTH
+                        if(flag1 and (not flag2)):exStep.insert(0, Step(nexX_to_r2_consider_yaw, nexY_to_r2_consider_yaw, direction[2], False, True))
+                        else: exStep.append(Step(nexX_to_r2_consider_yaw, nexY_to_r2_consider_yaw, direction[2], False, True))
                         kfs2_can_get.pop(0)
                         break
             pub_path.extend(exStep)
+        
+        # self.logger.info("Here----------------------------")
+        idx=1
+        while idx<len(pub_path):
+            if pub_path[idx-1].yaw != pub_path[idx].yaw:
+                if abs(pub_path[idx-1].x+self.RESERVERED_LENGTH*math.cos(pub_path[idx-1].yaw) - (pub_path[idx].x+self.RESERVERED_LENGTH*math.cos(pub_path[idx].yaw))) > 1e-6 or abs(pub_path[idx-1].y+self.RESERVERED_LENGTH*math.sin(pub_path[idx-1].yaw) - (pub_path[idx].y+self.RESERVERED_LENGTH*math.sin(pub_path[idx].yaw))) > 1e-6:
+                    pub_path.insert(idx, Step(pub_path[idx-1].x+self.RESERVERED_LENGTH*math.cos(pub_path[idx-1].yaw)-math.cos(pub_path[idx].yaw)*self.RESERVERED_LENGTH,
+                                              pub_path[idx-1].y+self.RESERVERED_LENGTH*math.sin(pub_path[idx-1].yaw)-math.sin(pub_path[idx].yaw)*self.RESERVERED_LENGTH,
+                                              pub_path[idx].yaw, False, False))
+                    idx-=1
+                elif abs(pub_path[idx-1].yaw)<1e-6:
+                    if abs(pub_path[idx].yaw-math.pi/2)<1e-6:
+                        pub_path.insert(idx, Step(pub_path[idx-1].x, pub_path[idx-1].y-self.RESERVERED_LENGTH, pub_path[idx-1].yaw, False, False))
+                    else:
+                        pub_path.insert(idx, Step(pub_path[idx-1].x, pub_path[idx-1].y+self.RESERVERED_LENGTH, pub_path[idx-1].yaw, False, False))
+                    idx+=1
+                elif abs(abs(pub_path[idx].yaw-pub_path[idx-1].yaw)-math.pi)<1e-6:
+                    pub_path.insert(idx, Step(pub_path[idx-1].x-self.RESERVERED_LENGTH, (pub_path[idx-1].y+pub_path[idx].y)*0.5, 0, False, False))
+                else:
+                    if abs(pub_path[idx-1].yaw-math.pi/2)<1e-6:
+                        pub_path.insert(idx, Step(pub_path[idx-1].x-self.RESERVERED_LENGTH, pub_path[idx-1].y, pub_path[idx-1].yaw, False, False))
+                    else:
+                        pub_path.insert(idx, Step(pub_path[idx-1].x-self.RESERVERED_LENGTH, pub_path[idx-1].y, pub_path[idx-1].yaw, False, False))
+                    
+                    idx+=1
+            idx+=1
         
         for i in range(len(pub_path)):
             step = pub_path[i]
@@ -195,12 +256,27 @@ class DFSPlanner:
         self._add_path(pub_path, cost, kfs2_needed, kfs1_on_the_way)
     
     def _add_path(self, path, cost, kfs2_needed, kfs1_affected):
+        # self.logger.info(f'Evaluated path with cost {cost}, kfs2_needed={kfs2_needed}, kfs1_affected={kfs1_affected}')
         self.path[kfs2_needed].append((path, cost, kfs2_needed, kfs1_affected))
         pos = len(self.path[kfs2_needed])-1
         i=len(self.path[kfs2_needed])-1
         while i>=0 and self.path[kfs2_needed][i][1] > self.path[kfs2_needed][pos][1]:i-=1
         while i>=0 and self.path[kfs2_needed][i][1] == self.path[kfs2_needed][pos][1] and len(self.path[kfs2_needed][i][3]) > len(self.path[kfs2_needed][pos][3]):i-=1
         self.path[kfs2_needed].insert(i+1, self.path[kfs2_needed].pop(pos))
+        if i == 0:
+            self.logger.info("Found best path so far! Details:")
+            self.logger.info("--- cnt_path ---")
+            for idx, s in enumerate(self.cnt_path):
+                self.logger.info(f"  Step {idx}: x={s.x}, y={s.y}, yaw={s.yaw:.2f}, req_go={s.require_can_go}, send_do={s.send_can_do}")
+            
+            self.logger.info("--- eval_path ---")
+            for idx, s in enumerate(self.eval_path):
+                self.logger.info(f"  Step {idx}: x={s.x}, y={s.y}, yaw={s.yaw:.2f}, req_go={s.require_can_go}, send_do={s.send_can_do}")
+            
+            self.logger.info("--- pub_path ---")
+            for idx, s in enumerate(path):
+                self.logger.info(f"  Step {idx}: x={s.x:.2f}, y={s.y:.2f}, yaw={s.yaw:.2f}, req_go={s.require_can_go}, send_do={s.send_can_do}")
+            
         
             
         

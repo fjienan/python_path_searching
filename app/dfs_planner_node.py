@@ -9,7 +9,7 @@ DFS路径规划节点 - 简化版
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String
+from std_msgs.msg import Bool, Int32, Float32, Float32MultiArray, String
 from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSHistoryPolicy, QoSReliabilityPolicy
 import json
 import numpy as np
@@ -43,11 +43,14 @@ class DFSPlannerNode(Node):
         self.declare_parameter('grid_cols', 3)
         self.declare_parameter('start_row', -1)
         self.declare_parameter('start_col', 0)
+        
+        self.declare_parameter('initial_pose', '/initial_pose')
 
-        self.GRID_ROWS = self.get_parameter('grid_rows').value
-        self.GRID_COLS = self.get_parameter('grid_cols').value
-        self.START_ROW = self.get_parameter('start_row').value
-        self.START_COL = self.get_parameter('start_col').value
+        self.GRID_ROWS = int(self.get_parameter('grid_rows').value)
+        self.GRID_COLS = int(self.get_parameter('grid_cols').value)
+        self.START_ROW = int(self.get_parameter('start_row').value)
+        self.START_COL = int(self.get_parameter('start_col').value)
+        self.initial_pos_x, self.initial_pos_y = None, None
 
         # AStar中的参数注入与GridConverter初始化
         self.declare_parameter('map_origin', [3.2, 1.2, 0.0])
@@ -65,7 +68,7 @@ class DFSPlannerNode(Node):
         )
 
         # 初始化外部的DFS规划器
-        self.planner = DFSPlanner(self.GRID_COLS, self.GRID_ROWS, logger=self.get_logger())
+        self.planner = None
         self.path = None
 
         self.kfs_grid = np.zeros((self.GRID_ROWS, self.GRID_COLS), dtype=int)
@@ -84,6 +87,7 @@ class DFSPlannerNode(Node):
         self.kfs_data_sub = self.create_subscription(
             String, kfs_topic, self.kfs_data_callback, qos_profile
         )
+        self.initial_pose_sub = self.create_subscription(Float32MultiArray, '/start_pose', self._initial_pose_callback, 10)
         
         # Path 发布器
         path_qos = QoSProfile(
@@ -107,32 +111,61 @@ class DFSPlannerNode(Node):
                 return
 
             self.kfs_grid = grid
+            self.kfs_data_received = True
             self.get_logger().info(f'Received kfs_data:\n{grid}')
             
-            # 将仅仅包含kfs值的地图网格扔给DFSPlanner
-            self.path = self.planner.plan_path(grid=self.kfs_grid, stx=self.START_ROW, sty=self.START_COL)
-            if self.path is None:
-                self.get_logger().warn(f'Empty path found.')
-                self.delete_path()
-            else:
-                self.get_logger().info(f'Planned path with {len(self.path[0])} steps, total cost: {self.path[1]}, get {self.path[2]} kfs.')
-                if len(self.path[3]) > 0: self.get_logger().warn(f'You have to remove kfs1 at {self.path[3]} first before launching R2')
-                self.get_logger().info(f'Path details:')
-                for i in range(len(self.path[0])):
-                    step = self.path[0][i]
-                    now_yaw = 0
-                    if step.y == 0: now_yaw = 0
-                    elif step.yaw ==1: now_yaw = math.pi/2
-                    elif step.yaw ==2: now_yaw = -math.pi/2
-                    self.get_logger().info(f'  Step {i+1}/{len(self.path[0])}: x={step.x}, y={step.y}, yaw={math.degrees(now_yaw)}, require_can_go={step.require_can_go}, send_can_do={step.send_can_do}')
-                
-                # 发布路径
-                self.publish_path(self.path[0])
+            if self.planner is None: self._try_plan_path()
 
         except json.JSONDecodeError as e:
             self.get_logger().error(f'Failed to parse JSON: {e}')
         except Exception as e:
             self.get_logger().error(f'Error processing kfs_data: {e}')
+    
+    def _initial_pose_callback(self, msg):
+        """处理初始位姿消息"""
+        try:
+            data = msg.data
+            if len(data) != 2:
+                self.get_logger().warn(f'Invalid initial pose data: {data}')
+                return
+            if self.initial_pos_x is not None and self.initial_pos_y is not None: return
+            self.initial_pos_x, self.initial_pos_y = float(data[0]), float(data[1])
+            self.get_logger().info(f'Updated initial pose: x={self.initial_pos_x}, y={self.initial_pos_y}')
+            
+            if self.planner is None: self._try_plan_path()
+            
+        except Exception as e:
+            self.get_logger().error(f'Error processing initial pose: {e}')
+
+    def _try_plan_path(self):
+        """尝试初始化规划器并开始DFS路径规划，需要确保initial_pose和kfs_data都已收到"""
+        if self.initial_pos_x is None or self.initial_pos_y is None:
+            self.get_logger().warn('Initial position not set yet, waiting...')
+            return
+            
+        if not getattr(self, 'kfs_data_received', False):
+            self.get_logger().info('kfs_data not received yet, waiting...')
+            return
+        
+        self.get_logger().info('Starting DFS path planning...')
+            
+        if self.planner is None:
+            self.planner = DFSPlanner(self.GRID_COLS, self.GRID_ROWS, self.initial_pos_x, self.initial_pos_y, self.grid_converter, logger=self.get_logger())
+
+        self.path = self.planner.plan_path(grid=self.kfs_grid, stx=self.START_ROW, sty=self.START_COL)
+        if self.path is None:
+            self.get_logger().warn(f'Empty path found.')
+            self.delete_path()
+        else:
+            self.get_logger().info(f'Planned path with {len(self.path[0])} steps, total cost: {self.path[1]}, get {self.path[2]} kfs.')
+            if len(self.path[3]) > 0: self.get_logger().warn(f'You have to remove kfs1 at {self.path[3]} first before launching R2')
+            self.get_logger().info(f'Path details:')
+            for i in range(len(self.path[0])):
+                step = self.path[0][i]
+                self.get_logger().info(f'  Step {i+1}/{len(self.path[0])}: x={step.x}, y={step.y}, yaw={math.degrees(step.yaw)}, require_can_go={step.require_can_go}, send_can_do={step.send_can_do}')
+            
+            # 发布路径
+            self.publish_path(self.path[0])
     
     def delete_path(self):
         """删除旧路径（发布一个空的路径）"""
@@ -153,34 +186,19 @@ class DFSPlannerNode(Node):
             self.path_pub.publish(path_msg)
             return
 
-        start_x, start_y = self.grid_converter.grid_to_map(steps[0].x, steps[0].y)
 
         for i, step in enumerate(steps):
-            x, y = self.grid_converter.grid_to_map(step.x, step.y)
-
-            # 以初始位置为原点
-            x -= start_x
-            y -= start_y
-
-            # 方向转为弧度计算
-            now_yaw = 0
-            if step.y == 0: 
-                now_yaw = 0
-            elif step.yaw == 1: 
-                now_yaw = math.pi/2
-            elif step.yaw == 2: 
-                now_yaw = -math.pi/2
 
             pose = PoseStamped()
             pose.header.frame_id = 'map'
             pose.header.stamp = path_msg.header.stamp
             # x y
-            pose.pose.position.x = float(x)
-            pose.pose.position.y = float(y)
+            pose.pose.position.x = float(step.x)
+            pose.pose.position.y = float(step.y)
             pose.pose.position.z = 0.0
 
             # raw -> 四元数
-            half_yaw = now_yaw * 0.5
+            half_yaw = step.yaw * 0.5
             pose.pose.orientation.w = math.cos(half_yaw)
             pose.pose.orientation.z = math.sin(half_yaw)
             pose.pose.orientation.x = 0.0

@@ -45,8 +45,8 @@ class OdomSimulator(Node):
         start_row         = self.get_parameter('start_row').value
         start_col         = self.get_parameter('start_col').value
 
-        start_x = map_origin_raw[0] + start_row * grid_resolution + 0.5 * grid_resolution
-        start_y = map_origin_raw[1] + start_col * grid_resolution + 0.5 * grid_resolution
+        start_x =0
+        start_y =0
 
         self._pose_x = start_x
         self._pose_y = start_y

@@ -46,6 +46,7 @@ class TrackerNode(Node):
 
         # --- Topics ---
         self.declare_parameter('planning_path',       '/planning/path')
+        self.declare_parameter('initial_pose',       '/initial_pose')
         self.declare_parameter('odom_world',         '/odom_world')
         self.declare_parameter('can_go',            '/can_go')
         self.declare_parameter('cmd_vel',            '/cmd_vel')
@@ -120,7 +121,7 @@ class TrackerNode(Node):
             durability=QoSDurabilityPolicy.TRANSIENT_LOCAL
         )
         self.path_sub   = self.create_subscription(Path,      self._p('planning_path', '/planning/path'), self._path_callback,  qos)
-        self.odom_sub   = self.create_subscription(PoseStamped, self._p('odom_world',   '/odom_world'),   self._odom_callback,   10)
+        self.odom_sub   = self.create_subscription(Odometry, self._p('odom_world',   '/odom_world'),   self._odom_callback,   10)
         self.can_go_sub = self.create_subscription(Bool,     self._p('can_go',       '/can_go'),       self._can_go_callback, 10)
         self.suspension_state = self.create_subscription(Int32, self._p('suspension_state', '/current_state'), self._suspension_state_callback, 10)
 
@@ -128,6 +129,7 @@ class TrackerNode(Node):
         self.cmd_pub = self.create_publisher(Float32MultiArray, self._p('cmd_vel', '/t0x0101'), 10)
         self.dir_pub = self.create_publisher(Int32,    self._p('tracker_direction',  '/direction'),         10)
         self.yaw_pub = self.create_publisher(Float32,  self._p('target_yaw_deg',    '/target_yaw_deg'),    10)
+        self.initPos_pub = self.create_publisher(Float32MultiArray, self._p('initial_pose', '/initial_pose'), 10)
 
     def _suspension_state_callback(self, msg):
         self.suspension_state = msg.data
@@ -173,20 +175,21 @@ class TrackerNode(Node):
             f'total={len(self.current_path.poses)}, entering HOLD')
         
     def _odom_callback(self, msg):
-        self.current_pos[0] = msg.pose.position.x
-        self.current_pos[1] = msg.pose.position.y
-        self.current_pos[2] = msg.pose.position.z
+        self.current_pos[0] = msg.pose.pose.position.x
+        self.current_pos[1] = msg.pose.pose.position.y
+        self.current_pos[2] = msg.pose.pose.position.z
         self.quaterion = [
-            msg.pose.orientation.x,
-            msg.pose.orientation.y,
-            msg.pose.orientation.z,
-            msg.pose.orientation.w
+            msg.pose.pose.orientation.x,
+            msg.pose.pose.orientation.y,
+            msg.pose.pose.orientation.z,
+            msg.pose.pose.orientation.w
         ]
         self.current_yaw = self._normalize_angle(yaw_from_quaternion(self.quaterion))
         if not self.have_odom:
             self.start_pos_x = self.current_pos[0]
             self.start_pos_y = self.current_pos[1]
             self.have_odom = True
+            self.initPos_pub.publish(Float32MultiArray(data=[self.start_pos_x, self.start_pos_y]))
         #self.get_logger().info(f"pos=({self.current_pos[0]},{self.current_pos[1]}, {math.degrees(self.current_yaw)})")
     def _can_go_callback(self, msg):
         self.can_go = msg.data
