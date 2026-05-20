@@ -15,6 +15,7 @@
 import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import Path, Odometry
+from geometry_msgs.msg import PoseStamped
 from std_msgs.msg import Bool, Int32, Float32, Float32MultiArray
 from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSHistoryPolicy, QoSReliabilityPolicy
 import math
@@ -83,6 +84,8 @@ class TrackerNode(Node):
         self.have_odom             = False
         self.can_go                = False
         self.angle_ready           = False
+        self.start_pos_x = 0
+        self.start_pos_y = 0
         # 直线闭环状态变量
         self._move_start_pos = np.array([0.0, 0.0])
 
@@ -117,7 +120,7 @@ class TrackerNode(Node):
             durability=QoSDurabilityPolicy.TRANSIENT_LOCAL
         )
         self.path_sub   = self.create_subscription(Path,      self._p('planning_path', '/planning/path'), self._path_callback,  qos)
-        self.odom_sub   = self.create_subscription(Odometry, self._p('odom_world',   '/odom_world'),   self._odom_callback,   10)
+        self.odom_sub   = self.create_subscription(PoseStamped, self._p('odom_world',   '/odom_world'),   self._odom_callback,   10)
         self.can_go_sub = self.create_subscription(Bool,     self._p('can_go',       '/can_go'),       self._can_go_callback, 10)
         self.suspension_state = self.create_subscription(Int32, self._p('suspension_state', '/current_state'), self._suspension_state_callback, 10)
 
@@ -170,17 +173,21 @@ class TrackerNode(Node):
             f'total={len(self.current_path.poses)}, entering HOLD')
         
     def _odom_callback(self, msg):
-        self.current_pos[0] = msg.pose.pose.position.x
-        self.current_pos[1] = msg.pose.pose.position.y
-        self.current_pos[2] = msg.pose.pose.position.z
+        self.current_pos[0] = msg.pose.position.x
+        self.current_pos[1] = msg.pose.position.y
+        self.current_pos[2] = msg.pose.position.z
         self.quaterion = [
-            msg.pose.pose.orientation.x,
-            msg.pose.pose.orientation.y,
-            msg.pose.pose.orientation.z,
-            msg.pose.pose.orientation.w
+            msg.pose.orientation.x,
+            msg.pose.orientation.y,
+            msg.pose.orientation.z,
+            msg.pose.orientation.w
         ]
         self.current_yaw = self._normalize_angle(yaw_from_quaternion(self.quaterion))
-        self.have_odom = True
+        if not self.have_odom:
+            self.start_pos_x = self.current_pos[0]
+            self.start_pos_y = self.current_pos[1]
+            self.have_odom = True
+        #self.get_logger().info(f"pos=({self.current_pos[0]},{self.current_pos[1]}, {math.degrees(self.current_yaw)})")
     def _can_go_callback(self, msg):
         self.can_go = msg.data
 
@@ -217,7 +224,7 @@ class TrackerNode(Node):
         if self.current_path is None or self.current_target_index >= len(self.current_path.poses):
             return None
         pose = self.current_path.poses[self.current_target_index].pose
-        return np.array([pose.position.x, pose.position.y])
+        return np.array([pose.position.x+self.start_pos_x, pose.position.y+self.start_pos_y])
 
     def _move_to_next_target(self):
         self.current_target_index += 1
@@ -266,6 +273,10 @@ class TrackerNode(Node):
                 self.state = self.MOVE
                 self._reset_pids()
                 self.get_logger().info(f'HOLD: can_go=True,angle_ready = {self.angle_ready}, entering MOVE')
+            # self.get_logger().info(
+            #     f'MOVE: angle_ready={self.angle_ready}, pos={self.current_pos[0]:.2f},{self.current_pos[1]:.2f},{math.degrees(self.current_yaw):.1f} deg '
+            #     f'target={target[0]:.2f},{target[1]:.2f},{math.degrees(self.target_yaw):.1f} deg '
+            # )
             return
 
         elif self.state == self.MOVE:

@@ -14,7 +14,7 @@
     grid_cols:         3
     grid_resolution:   1.2
     start_row:         -1
-    start_col:         0
+    start_col:         1
 
     goal_grid_0:       [3, 0]
     goal_grid_1:       [3, 1]
@@ -48,10 +48,10 @@
     kd_adj_angle: 0.1
     max_adj_angular:   1.0
 
-    kp_adj_dist: 1.5
+    kp_adj_dist: 1.2
     ki_adj_dist: 0.0
     kd_adj_dist: 0.1
-    max_adj_vel:   0.5
+    max_adj_vel:   0.3
 
     # -------------------- Topics --------------------
     kfs_grid_data:        '/kfs_grid_data'
@@ -59,10 +59,10 @@
     can_go:               '/can_go'
     planning_direction:   '/planning/direction'
     planning_trigger:     '/task/trigger'
-    odom_world:           '/odin1/odometry_highfreq'
+    odom_world:           '/odin1/relocation'
     # odom_world:         '/odom_world'
     cmd_vel:              '/t0x0101_'
-    # scmd_vel:            '/cmd_vel'
+    # cmd_vel:            '/cmd_vel'
     tracker_direction:    '/direction'
     target_yaw_deg:       '/target_yaw_deg'
     suspension_state:     '/current_state'
