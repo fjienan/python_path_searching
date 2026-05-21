@@ -43,6 +43,7 @@ class DFSPlannerNode(Node):
         self.declare_parameter('grid_cols', 3)
         self.declare_parameter('start_row', -1)
         self.declare_parameter('start_col', 0)
+        self.declare_parameter('reserved_length', 0.15)
         
         self.declare_parameter('initial_pose', '/initial_pose')
 
@@ -51,6 +52,7 @@ class DFSPlannerNode(Node):
         self.START_ROW = int(self.get_parameter('start_row').value)
         self.START_COL = int(self.get_parameter('start_col').value)
         self.initial_pos_x, self.initial_pos_y = None, None
+        self.reserved_length = self.get_parameter('reserved_length').value
 
         # AStar中的参数注入与GridConverter初始化
         self.declare_parameter('map_origin', [3.2, 1.2, 0.0])
@@ -72,7 +74,18 @@ class DFSPlannerNode(Node):
         self.path = None
 
         self.kfs_grid = np.zeros((self.GRID_ROWS, self.GRID_COLS), dtype=int)
-        
+        self.kfs_grid_height1 = np.array([
+            [400, 200, 400],
+            [200, 400, 600],
+            [400, 600, 400],
+            [200, 400, 200]
+        ], dtype=int)
+        self.kfs_grid_height2 = np.array([
+            [400, 200, 400],
+            [600, 400, 200],
+            [400, 600, 400],
+            [200, 400, 200]
+        ], dtype=int)
 
         kfs_topic = self.declare_parameter('kfs_grid_data', '/kfs_grid_data').value
         path_topic = self.declare_parameter('planning_path', '/planning/path').value
@@ -96,7 +109,7 @@ class DFSPlannerNode(Node):
             depth=1,
             durability=QoSDurabilityPolicy.TRANSIENT_LOCAL
         )
-        self.path_pub = self.create_publisher(Path, path_topic, path_qos)
+        self.path_pub = self.create_publisher(String, path_topic, path_qos)
 
         self.get_logger().info('DFS Planner Node started (Simplified)')
 
@@ -150,7 +163,7 @@ class DFSPlannerNode(Node):
         self.get_logger().info('Starting DFS path planning...')
             
         if self.planner is None:
-            self.planner = DFSPlanner(self.GRID_COLS, self.GRID_ROWS, self.initial_pos_x, self.initial_pos_y, self.grid_converter, logger=self.get_logger())
+            self.planner = DFSPlanner(self.GRID_COLS, self.GRID_ROWS, self.initial_pos_x, self.initial_pos_y, self.reserved_length, self.grid_converter, self.kfs_grid_height1, logger=self.get_logger())
 
         self.path = self.planner.plan_path(grid=self.kfs_grid, stx=self.START_ROW, sty=self.START_COL)
         if self.path is None:
@@ -168,46 +181,44 @@ class DFSPlannerNode(Node):
             self.publish_path(self.path[0])
     
     def delete_path(self):
-        """删除旧路径（发布一个空的路径）"""
-        empty_path = Path()
-        empty_path.header.frame_id = 'map'
-        empty_path.header.stamp = self.get_clock().now().to_msg()
-        self.path_pub.publish(empty_path)
+        """删除旧路径（发布一个空的JSON路径）"""
+        msg = String()
+        msg.data = json.dumps({"points": []})
+        self.path_pub.publish(msg)
 
     def publish_path(self, steps):
-        """发布路径（将grid索引转换为以此为起始原点的物理坐标）"""
+        """发布路径数据（JSON打包版）"""
         self.delete_path()
 
-        path_msg = Path()
-        path_msg.header.frame_id = 'map'
-        path_msg.header.stamp = self.get_clock().now().to_msg()
+        data = {
+            "points": []
+        }
 
         if not steps:
-            self.path_pub.publish(path_msg)
+            msg = String()
+            msg.data = json.dumps(data)
+            self.path_pub.publish(msg)
             return
 
+        for step in steps:
+            point = {
+                "x": float(step.x),
+                "y": float(step.y),
+                "yaw": float(step.yaw),
+                "require_can_go": float(step.require_can_go),
+                "send_can_do": float(step.send_can_do)
+            }
 
-        for i, step in enumerate(steps):
+            data["points"].append(point)
 
-            pose = PoseStamped()
-            pose.header.frame_id = 'map'
-            pose.header.stamp = path_msg.header.stamp
-            # x y
-            pose.pose.position.x = float(step.x)
-            pose.pose.position.y = float(step.y)
-            pose.pose.position.z = 0.0
+        msg = String()
+        msg.data = json.dumps(data)
 
-            # raw -> 四元数
-            half_yaw = step.yaw * 0.5
-            pose.pose.orientation.w = math.cos(half_yaw)
-            pose.pose.orientation.z = math.sin(half_yaw)
-            pose.pose.orientation.x = 0.0
-            pose.pose.orientation.y = 0.0
+        self.path_pub.publish(msg)
 
-            path_msg.poses.append(pose)
-
-        self.path_pub.publish(path_msg)
-        self.get_logger().info(f'Published new path with {len(path_msg.poses)} poses')
+        self.get_logger().info(
+            f'Published {len(data["points"])} path points'
+        )
 
 def main(args=None):
     rclpy.init(args=args)

@@ -32,7 +32,7 @@ from core.step import Step
 from core.grid_utils import GridConverter
 
 class DFSPlanner:
-    def __init__(self, grid_cols, grid_rows, start_x, start_y, grid_converter, logger=None):
+    def __init__(self, grid_cols, grid_rows, start_x, start_y, reserved_length, grid_converter, kfs_grid_height, logger=None):
         self.logger = logger
         self.GRID_ROWS = grid_rows
         self.GRID_COLS = grid_cols
@@ -41,7 +41,7 @@ class DFSPlanner:
         self.logger.info(f'start position ({self.initial_pos_x}, {self.initial_pos_y})')
         self.DIRCTIONS = [(1, 0, 0), (0, 1, math.pi/2), (0, -1, -math.pi/2)] 
         self.GRID = np.zeros((self.GRID_ROWS+2, self.GRID_COLS), dtype=int)
-        self.RESERVERED_LENGTH = 0.2
+        self.RESERVERED_LENGTH = reserved_length
         self.visited = np.zeros((self.GRID_ROWS+2, self.GRID_COLS), dtype=bool)
         self.path = [[],[],[],[]]
         self.cnt_path = []
@@ -53,6 +53,7 @@ class DFSPlanner:
         self.FETCH_KFS2_COST = 6
         
         self.grid_converter = grid_converter
+        self.kfs_grid_height = kfs_grid_height
     
     def plan_path(self, grid, stx, sty):
         """DFS路径规划算法实现"""
@@ -196,13 +197,15 @@ class DFSPlanner:
             if len(kfs2_on_the_way)>0 and next_step is not None and kfs2_on_the_way[0] == [round(next_step.x), round(next_step.y)]:
                 nexX_to_r2_consider_yaw = nowX_to_r2-math.cos(next_step.yaw)*self.RESERVERED_LENGTH
                 nexY_to_r2_consider_yaw = nowY_to_r2-math.sin(next_step.yaw)*self.RESERVERED_LENGTH
-                exStep.append(Step(nexX_to_r2_consider_yaw, nexY_to_r2_consider_yaw, next_step.yaw, False, True))
+                height_diff = self.kfs_grid_height[round(next_step.x-1)][round(next_step.y)] - self.kfs_grid_height[round(step.x-1)][round(step.y)]
+                exStep.append(Step(nexX_to_r2_consider_yaw, nexY_to_r2_consider_yaw, next_step.yaw, False, height_diff))
                 kfs2_on_the_way.pop(0)
                 flag1=True
             now_dir = self._get_dir_idx(step.yaw)
             if len(kfs2_by_the_way)>0 and 0 <= round(step.x)+self.DIRCTIONS[now_dir][0] <= 5 and 0<= round(step.y)+self.DIRCTIONS[now_dir][1] <= 2:
                 if kfs2_by_the_way[0] == [round(step.x)+self.DIRCTIONS[now_dir][0], round(step.y)+self.DIRCTIONS[now_dir][1]]:
-                    exStep.insert(0, Step(nowX_to_r2_consider_yaw, nowY_to_r2_consider_yaw, step.yaw, False, True))
+                    height_diff = self.kfs_grid_height[round(step.x-1)+self.DIRCTIONS[now_dir][0]][round(step.y)+self.DIRCTIONS[now_dir][1]] - self.kfs_grid_height[round(step.x-1)][round(step.y)]
+                    exStep.insert(0, Step(nowX_to_r2_consider_yaw, nowY_to_r2_consider_yaw, step.yaw, False, height_diff))
                     kfs2_by_the_way.pop(0)
                     flag2=True
             for direction in self.DIRCTIONS:
@@ -210,8 +213,9 @@ class DFSPlanner:
                     if kfs2_can_get[0] == [round(step.x)+direction[0], round(step.y)+direction[1]]:
                         nexX_to_r2_consider_yaw = nowX_to_r2-math.cos(direction[2])*self.RESERVERED_LENGTH
                         nexY_to_r2_consider_yaw = nowY_to_r2-math.sin(direction[2])*self.RESERVERED_LENGTH
-                        if(flag1 and (not flag2)):exStep.insert(0, Step(nexX_to_r2_consider_yaw, nexY_to_r2_consider_yaw, direction[2], False, True))
-                        else: exStep.append(Step(nexX_to_r2_consider_yaw, nexY_to_r2_consider_yaw, direction[2], False, True))
+                        height_diff = self.kfs_grid_height[round(step.x-1)+direction[0]][round(step.y)+direction[1]] - self.kfs_grid_height[round(step.x-1)][round(step.y)]
+                        if(flag1 and (not flag2)):exStep.insert(0, Step(nexX_to_r2_consider_yaw, nexY_to_r2_consider_yaw, direction[2], False, height_diff))
+                        else: exStep.append(Step(nexX_to_r2_consider_yaw, nexY_to_r2_consider_yaw, direction[2], False, height_diff))
                         kfs2_can_get.pop(0)
                         break
             pub_path.extend(exStep)
@@ -223,21 +227,21 @@ class DFSPlanner:
                 if abs(pub_path[idx-1].x+self.RESERVERED_LENGTH*math.cos(pub_path[idx-1].yaw) - (pub_path[idx].x+self.RESERVERED_LENGTH*math.cos(pub_path[idx].yaw))) > 1e-6 or abs(pub_path[idx-1].y+self.RESERVERED_LENGTH*math.sin(pub_path[idx-1].yaw) - (pub_path[idx].y+self.RESERVERED_LENGTH*math.sin(pub_path[idx].yaw))) > 1e-6:
                     pub_path.insert(idx, Step(pub_path[idx-1].x+self.RESERVERED_LENGTH*math.cos(pub_path[idx-1].yaw)-math.cos(pub_path[idx].yaw)*self.RESERVERED_LENGTH,
                                               pub_path[idx-1].y+self.RESERVERED_LENGTH*math.sin(pub_path[idx-1].yaw)-math.sin(pub_path[idx].yaw)*self.RESERVERED_LENGTH,
-                                              pub_path[idx].yaw, False, False))
+                                              pub_path[idx].yaw, False, 0))
                     idx-=1
                 elif abs(pub_path[idx-1].yaw)<1e-6:
                     if abs(pub_path[idx].yaw-math.pi/2)<1e-6:
-                        pub_path.insert(idx, Step(pub_path[idx-1].x, pub_path[idx-1].y-self.RESERVERED_LENGTH, pub_path[idx-1].yaw, False, False))
+                        pub_path.insert(idx, Step(pub_path[idx-1].x, pub_path[idx-1].y-self.RESERVERED_LENGTH, pub_path[idx-1].yaw, False, 0))
                     else:
-                        pub_path.insert(idx, Step(pub_path[idx-1].x, pub_path[idx-1].y+self.RESERVERED_LENGTH, pub_path[idx-1].yaw, False, False))
+                        pub_path.insert(idx, Step(pub_path[idx-1].x, pub_path[idx-1].y+self.RESERVERED_LENGTH, pub_path[idx-1].yaw, False, 0))
                     idx+=1
                 elif abs(abs(pub_path[idx].yaw-pub_path[idx-1].yaw)-math.pi)<1e-6:
-                    pub_path.insert(idx, Step(pub_path[idx-1].x-self.RESERVERED_LENGTH, (pub_path[idx-1].y+pub_path[idx].y)*0.5, 0, False, False))
+                    pub_path.insert(idx, Step(pub_path[idx-1].x-self.RESERVERED_LENGTH, (pub_path[idx-1].y+pub_path[idx].y)*0.5, 0, False, 0))
                 else:
                     if abs(pub_path[idx-1].yaw-math.pi/2)<1e-6:
-                        pub_path.insert(idx, Step(pub_path[idx-1].x-self.RESERVERED_LENGTH, pub_path[idx-1].y, pub_path[idx-1].yaw, False, False))
+                        pub_path.insert(idx, Step(pub_path[idx-1].x-self.RESERVERED_LENGTH, pub_path[idx-1].y, pub_path[idx-1].yaw, False, 0))
                     else:
-                        pub_path.insert(idx, Step(pub_path[idx-1].x-self.RESERVERED_LENGTH, pub_path[idx-1].y, pub_path[idx-1].yaw, False, False))
+                        pub_path.insert(idx, Step(pub_path[idx-1].x-self.RESERVERED_LENGTH, pub_path[idx-1].y, pub_path[idx-1].yaw, False, 0))
                     
                     idx+=1
             idx+=1

@@ -16,7 +16,8 @@ import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import Path, Odometry
 from geometry_msgs.msg import PoseStamped
-from std_msgs.msg import Bool, Int32, Float32, Float32MultiArray
+from std_msgs.msg import Bool, Int32, Float32, Float32MultiArray, String
+import json
 from rclpy.qos import QoSProfile, QoSDurabilityPolicy, QoSHistoryPolicy, QoSReliabilityPolicy
 import math
 import numpy as np
@@ -28,7 +29,7 @@ from core.transform_utils import yaw_from_quaternion
 
 class TrackerNode(Node):
 
-    ADJ, MOVE, HOLD = 0, 1, 2
+    ADJ, MOVE, HOLD, FETCH, RET = 0, 1, 2, 3, 4
 
     def __init__(self):
         super().__init__('tracker')
@@ -43,6 +44,7 @@ class TrackerNode(Node):
         self.declare_parameter('angle_threshold',    0.08)
         self.declare_parameter('arrive_precise_threshold',    0.01)
         self.declare_parameter('angle_precise_threshold',    0.01)
+        self.declare_parameter('reserved_length', 0.15)
 
         # --- Topics ---
         self.declare_parameter('planning_path',       '/planning/path')
@@ -53,6 +55,7 @@ class TrackerNode(Node):
         self.declare_parameter('tracker_direction',  '/direction')
         self.declare_parameter('target_yaw_deg',      '/target_yaw_deg')
         self.declare_parameter('suspension_state', '/current_state')
+        self.declare_parameter('can_do', '/can_do')
 
         # --- PID ---
         self.declare_parameter('kp_angle', 4.0); self.declare_parameter('ki_angle', 0.0); self.declare_parameter('kd_angle', 0.2)
@@ -73,6 +76,7 @@ class TrackerNode(Node):
         self.angle_threshold     = self._p('angle_threshold')
         self.arrive_precise_threshold = self._p('arrive_precise_threshold')
         self.angle_precise_threshold = self._p('angle_precise_threshold')
+        self.reserved_length     = self._p('reserved_length')
 
         self.get_logger().info(f'__init__: Tracker Node started, motion_type={self.motion_type}')
 
@@ -120,8 +124,8 @@ class TrackerNode(Node):
             depth=1,
             durability=QoSDurabilityPolicy.TRANSIENT_LOCAL
         )
-        self.path_sub   = self.create_subscription(Path,      self._p('planning_path', '/planning/path'), self._path_callback,  qos)
-        self.odom_sub   = self.create_subscription(Odometry, self._p('odom_world',   '/odom_world'),   self._odom_callback,   10)
+        self.path_sub   = self.create_subscription(String,    self._p('planning_path', '/planning/path'), self._path_callback,  qos)
+        self.odom_sub   = self.create_subscription(PoseStamped, self._p('odom_world',   '/odom_world'),   self._odom_callback,   10)
         self.can_go_sub = self.create_subscription(Bool,     self._p('can_go',       '/can_go'),       self._can_go_callback, 10)
         self.suspension_state = self.create_subscription(Int32, self._p('suspension_state', '/current_state'), self._suspension_state_callback, 10)
 
@@ -130,17 +134,26 @@ class TrackerNode(Node):
         self.dir_pub = self.create_publisher(Int32,    self._p('tracker_direction',  '/direction'),         10)
         self.yaw_pub = self.create_publisher(Float32,  self._p('target_yaw_deg',    '/target_yaw_deg'),    10)
         self.initPos_pub = self.create_publisher(Float32MultiArray, self._p('initial_pose', '/initial_pose'), 10)
+        self.suspension_state_pub = self.create_publisher(Int32, self._p('suspension_state', '/current_state'), 10)
+        self.can_do_pub = self.create_publisher(Int32, self._p('can_do', '/can_do'), 10)
 
     def _suspension_state_callback(self, msg):
         self.suspension_state = msg.data
 
     def _path_callback(self, msg):
-        if len(msg.poses) == 0:
+        try:
+            path_data = json.loads(msg.data)
+            points = path_data.get("points", [])
+        except Exception as e:
+            self.get_logger().error(f'_path_callback: Failed to parse path JSON: {e}')
+            return
+
+        if len(points) == 0:
             self.get_logger().warn('_path_callback: Received empty path')
             return
 
         new_target_idx = 1
-        if new_target_idx >= len(msg.poses):
+        if new_target_idx >= len(points):
             self.get_logger().warn('_path_callback: Path too short after skipping first point')
             return
 
@@ -148,19 +161,19 @@ class TrackerNode(Node):
             cur_target = self._get_current_target()
             if cur_target is not None:
                 new_target = np.array([
-                    msg.poses[new_target_idx].pose.position.x,
-                    msg.poses[new_target_idx].pose.position.y
+                    points[new_target_idx]["x"] + self.start_pos_x,
+                    points[new_target_idx]["y"] + self.start_pos_y
                 ])
                 if np.allclose(cur_target, new_target, atol=0.05):
-                    self.current_path = msg
+                    self.current_path = points
                     return
 
-        self.current_path = msg
-        self.get_logger().info(f'_path_callback: Received path with {len(msg.poses)} points')
-        for i in range(len(self.current_path.poses)):
-            ox = self.current_path.poses[i].pose.position.x
-            oy = self.current_path.poses[i].pose.position.y
-            ori = self._normalize_angle(yaw_from_quaternion(self.current_path.poses[i].pose.orientation))
+        self.current_path = points
+        self.get_logger().info(f'_path_callback: Received path with {len(points)} points')
+        for i, p in enumerate(self.current_path):
+            ox = p["x"]
+            oy = p["y"]
+            ori = self._normalize_angle(p["yaw"])
             self.get_logger().info(f'_path_callback: Path point {i}: x={ox:.3f}, y={oy:.3f}, yaw={math.degrees(ori)} deg')
 
         self.current_target_index   = new_target_idx
@@ -172,17 +185,17 @@ class TrackerNode(Node):
         self._publish_direction()
         self.yaw_pub.publish(Float32(data=math.degrees(self.target_yaw)))
         self.get_logger().info(f'_path_callback: new_idx={self.current_target_index} '
-            f'total={len(self.current_path.poses)}, entering HOLD')
+            f'total={len(self.current_path)}, entering HOLD')
         
     def _odom_callback(self, msg):
-        self.current_pos[0] = msg.pose.pose.position.x
-        self.current_pos[1] = msg.pose.pose.position.y
-        self.current_pos[2] = msg.pose.pose.position.z
+        self.current_pos[0] = msg.pose.position.x
+        self.current_pos[1] = msg.pose.position.y
+        self.current_pos[2] = msg.pose.position.z
         self.quaterion = [
-            msg.pose.pose.orientation.x,
-            msg.pose.pose.orientation.y,
-            msg.pose.pose.orientation.z,
-            msg.pose.pose.orientation.w
+            msg.pose.orientation.x,
+            msg.pose.orientation.y,
+            msg.pose.orientation.z,
+            msg.pose.orientation.w
         ]
         self.current_yaw = self._normalize_angle(yaw_from_quaternion(self.quaterion))
         if not self.have_odom:
@@ -195,8 +208,8 @@ class TrackerNode(Node):
         self.can_go = msg.data
 
     def _read_target_yaw(self):
-        if self.current_path is None or self.current_target_index >= len(self.current_path.poses): return
-        self.target_yaw = self._normalize_angle(yaw_from_quaternion(self.current_path.poses[self.current_target_index].pose.orientation))
+        if self.current_path is None or self.current_target_index >= len(self.current_path): return
+        self.target_yaw = self._normalize_angle(self.current_path[self.current_target_index]["yaw"])
 
     def _reset_pids(self):
         self.pid_angle.reset(); self.pid_dist.reset()
@@ -224,25 +237,27 @@ class TrackerNode(Node):
         return angle
 
     def _get_current_target(self):
-        if self.current_path is None or self.current_target_index >= len(self.current_path.poses):
+        if self.current_path is None or self.current_target_index >= len(self.current_path):
             return None
-        pose = self.current_path.poses[self.current_target_index].pose
-        return np.array([pose.position.x+self.start_pos_x, pose.position.y+self.start_pos_y])
+        p = self.current_path[self.current_target_index]
+        #return np.array([p["x"]+self.start_pos_x, p["y"]+self.start_pos_y, p["require_can_go"], p["send_can_do"]])
+        return np.array([p["x"], p["y"], p["require_can_go"], p["send_can_do"]])
 
     def _move_to_next_target(self):
         self.current_target_index += 1
         self.can_go = False
         self.angle_ready = False
+        target = self._get_current_target()
         self.get_logger().info(
             f'_move_to_next_target: new_idx={self.current_target_index} '
-            f'total={len(self.current_path.poses)}, angle_ready={self.angle_ready}, entering HOLD'
+            f'total={len(self.current_path)}, angle_ready={self.angle_ready}, entering HOLD'
         )
-        if self.current_target_index >= len(self.current_path.poses):
+        if self.current_target_index >= len(self.current_path):
             self.get_logger().info('_move_to_next_target: All targets reached, stopping')
             return False
         self._read_target_yaw()
         self._reset_pids()
-        self.state=self.HOLD
+        self.state=self.MOVE
         self._publish_direction()
         self.yaw_pub.publish(Float32(data=math.degrees(self.target_yaw)))
         return True
@@ -272,15 +287,18 @@ class TrackerNode(Node):
             
             self._stop()
             
-            if self.can_go:
-                self.state = self.MOVE
-                self._reset_pids()
-                self.get_logger().info(f'HOLD: can_go=True,angle_ready = {self.angle_ready}, entering MOVE')
+            if not self.can_go:
+                return 
+            
+            self._reset_pids()
+            
+            self.state = self.MOVE
+            self.get_logger().info(f'HOLD: can_go=True,angle_ready = {self.angle_ready}, entering MOVE')
+            
             # self.get_logger().info(
             #     f'MOVE: angle_ready={self.angle_ready}, pos={self.current_pos[0]:.2f},{self.current_pos[1]:.2f},{math.degrees(self.current_yaw):.1f} deg '
             #     f'target={target[0]:.2f},{target[1]:.2f},{math.degrees(self.target_yaw):.1f} deg '
             # )
-            return
 
         elif self.state == self.MOVE:
             
@@ -299,9 +317,15 @@ class TrackerNode(Node):
             if arrived:
                 self.get_logger().info(
                     f'MOVE: roughly arrived! idx={self.current_target_index}/'
-                    f'{len(self.current_path.poses)}, entering ADJ to precisely align.'
                 )
-                self.state = self.ADJ
+                if int(target[3]) != 0:
+                    self.state = self.ADJ
+                    f'{len(self.current_path)}, entering ADJ to precisely align.'
+                else:
+                    if not self._move_to_next_target():
+                        self._stop()
+                        self.have_path = False
+                        self.get_logger().info('MOVE: all done, stopped')
                 return       
             
             # 未到终点，进行修正，将位置修正与角度修正分开处理
@@ -367,12 +391,9 @@ class TrackerNode(Node):
             if arrived:
                 self.get_logger().info(
                     f'ADJ: precisely arrived! idx={self.current_target_index}/'
-                    f'{len(self.current_path.poses)}, calling _move_to_next_target'
+                    f'{len(self.current_path)}, entering FETCH'
                 )
-                if not self._move_to_next_target():
-                    self._stop()
-                    self.have_path = False
-                    self.get_logger().info('ADJ: all done, stopped')
+                self.state = self.FETCH
                 return          
             
             # 未到终点，进行修正，将位置修正与角度修正分开处理
@@ -411,7 +432,118 @@ class TrackerNode(Node):
                 f'err={dx:.2f},{dy:.2f},{math.degrees(angle_error):.2f} deg '
                 f'vel={vel_forward:.3f},{vel_side:.3f},{vel_angle:.3f}'
             )
+        elif self.state == self.FETCH:
+            
+            # 读取当前参数
+            self._read_target_yaw()
+            dx   = target[0] - self.current_pos[0] +self.reserved_length*math.cos(self.target_yaw)
+            dy   = target[1] - self.current_pos[1] +self.reserved_length*math.sin(self.target_yaw)
+            angle_error = self._normalize_angle(self.target_yaw - self.current_yaw)
+            
+            # 终止条件检测
+            arrived = abs(dx) < self.arrive_precise_threshold and \
+                      abs(dy) < self.arrive_precise_threshold
+            if arrived:
+                self.can_do_pub.publish(Int32(data=int(target[3])))
+                self.get_logger().info(
+                    f'FETCH: can_do={target[3]} sent! idx={self.current_target_index}/'
+                    f'{len(self.current_path)}, entering RET '
+                )
+                self.state = self.RET
+                self.can_go = False
+                return         
 
+            self.suspension_state_pub.publish(Int32(data=-1))
+            # 未到终点，进行修正，将位置修正与角度修正分开处理
+            vel_forward,vel_side,vel_angle = 0,0,0
+            
+            # 设置速度
+            # - 计算距离
+            if(abs(math.degrees(self.target_yaw))<1e-6): dis_forward,dis_side = dx, dy
+            elif(abs(math.degrees(self.target_yaw)-90)<1e-6): dis_forward,dis_side = dy, -dx
+            elif(abs(math.degrees(self.target_yaw)+90)<1e-6): dis_forward,dis_side = -dy, dx
+            else: dis_forward,dis_side = -dx, -dy
+
+            # - 轴向
+            vel_forward = self.pid_adj_dist.compute(dis_forward, dt)
+            if abs(dis_forward) >= self.arrive_precise_threshold:
+                if vel_forward > 0: vel_forward = max(0.15, min(self._p('max_adj_vel'), vel_forward))
+                elif vel_forward < 0: vel_forward = min(-0.15, max(-self._p('max_adj_vel'), vel_forward))
+            else: vel_forward = 0.0
+            
+            # - 侧向
+            vel_side = self.pid_adj_dist.compute(dis_side, dt)
+            if abs(dis_side) >= self.arrive_precise_threshold:
+                if vel_side > 0: vel_side = max(0.15, min(self._p('max_adj_vel'), vel_side))
+                elif vel_side < 0: vel_side = min(-0.15, max(-self._p('max_adj_vel'), vel_side))
+            else: vel_side = 0.0
+            self.get_logger().info(
+                f'FETCH: angle_ready={self.angle_ready}, pos={self.current_pos[0]:.2f},{self.current_pos[1]:.2f},{math.degrees(self.current_yaw):.1f} deg '
+                f'target={target[0]:.2f},{target[1]:.2f},{math.degrees(self.target_yaw):.1f} deg '
+                f'err={dx:.2f},{dy:.2f},{math.degrees(angle_error):.2f} deg '
+                f'vel={vel_forward:.3f},{vel_side:.3f},{vel_angle:.3f}'
+            )
+            self._publish_cmd(vel_forward, vel_side, 0)
+        
+        elif self.state == self.RET:
+            if not self.can_go:
+                self._publish_cmd(0, 0, 0)
+                return
+            # 读取当前参数
+            self._read_target_yaw()
+            dx   = target[0] - self.current_pos[0]
+            dy   = target[1] - self.current_pos[1]
+            angle_error = self._normalize_angle(self.target_yaw - self.current_yaw)
+            
+            # 终止条件检测
+            arrived = abs(dx) < self.arrive_precise_threshold and \
+                      abs(dy) < self.arrive_precise_threshold
+            if arrived:
+                self.suspension_state_pub.publish(Int32(data=17))
+                self.get_logger().info(
+                    f'RET: returned! idx={self.current_target_index}/'
+                    f'{len(self.current_path)}, calling _move_to_next_target '
+                )
+                if not self._move_to_next_target():
+                    self._stop()
+                    self.have_path = False
+                    self.get_logger().info('RET: all done, stopped')
+                return         
+
+
+            self.suspension_state_pub.publish(Int32(data=-1))
+            # 未到终点，进行修正，将位置修正与角度修正分开处理
+            vel_forward,vel_side,vel_angle = 0,0,0
+            
+            # 设置速度
+            # - 计算距离
+            if(abs(math.degrees(self.target_yaw))<1e-6): dis_forward,dis_side = dx, dy
+            elif(abs(math.degrees(self.target_yaw)-90)<1e-6): dis_forward,dis_side = dy, -dx
+            elif(abs(math.degrees(self.target_yaw)+90)<1e-6): dis_forward,dis_side = -dy, dx
+            else: dis_forward,dis_side = -dx, -dy
+
+            # - 轴向
+            vel_forward = self.pid_adj_dist.compute(dis_forward, dt)
+            if abs(dis_forward) >= self.arrive_precise_threshold:
+                if vel_forward > 0: vel_forward = max(0.15, min(self._p('max_adj_vel'), vel_forward))
+                elif vel_forward < 0: vel_forward = min(-0.15, max(-self._p('max_adj_vel'), vel_forward))
+            else: vel_forward = 0.0
+            
+            # - 侧向
+            vel_side = self.pid_adj_dist.compute(dis_side, dt)
+            if abs(dis_side) >= self.arrive_precise_threshold:
+                if vel_side > 0: vel_side = max(0.15, min(self._p('max_adj_vel'), vel_side))
+                elif vel_side < 0: vel_side = min(-0.15, max(-self._p('max_adj_vel'), vel_side))
+            else: vel_side = 0.0
+            self.get_logger().info(
+                f'RET: angle_ready={self.angle_ready}, pos={self.current_pos[0]:.2f},{self.current_pos[1]:.2f},{math.degrees(self.current_yaw):.1f} deg '
+                f'target={target[0]:.2f},{target[1]:.2f},{math.degrees(self.target_yaw):.1f} deg '
+                f'err={dx:.2f},{dy:.2f},{math.degrees(angle_error):.2f} deg '
+                f'vel={vel_forward:.3f},{vel_side:.3f},{vel_angle:.3f}'
+            )
+            self._publish_cmd(vel_forward, vel_side, 0)
+            
+            
     # =======================================================================
     #  全向模式
     # =======================================================================
@@ -444,7 +576,7 @@ class TrackerNode(Node):
             if arrived:
                 self.get_logger().info(
                     f'MOVE: roughly arrived! idx={self.current_target_index}/'
-                    f'{len(self.current_path.poses)}, entering ADJ to precisely align.'
+                    f'{len(self.current_path)}, entering ADJ to precisely align.'
                 )
                 self.state = self.ADJ
                 return            
@@ -494,7 +626,7 @@ class TrackerNode(Node):
             if arrived:
                 self.get_logger().info(
                     f'ADJ: precisely arrived! idx={self.current_target_index}/'
-                    f'{len(self.current_path.poses)}, calling _move_to_next_target'
+                    f'{len(self.current_path)}, calling _move_to_next_target'
                 )
                 if not self._move_to_next_target():
                     self._stop()

@@ -31,6 +31,7 @@
     angle_threshold:   0.05     # 判定角度对齐的阈值 (rad)
     arrive_precise_threshold:  0.01      # 判定到达目标的距离阈值 (m)
     angle_precise_threshold:   0.02     # 判定角度对齐的阈值 (rad)
+    reserved_length:  0.15
 
     # ---------- PID ----------
     kp_angle: 2.5
@@ -59,10 +60,10 @@
     can_go:               '/can_go'
     planning_direction:   '/planning/direction'
     planning_trigger:     '/task/trigger'
-    # odom_world:           '/odin1/relocation'
-    odom_world:         '/odom_world'
-    # cmd_vel:              '/t0x0101_'
-    cmd_vel:            '/cmd_vel'
+    odom_world:           '/odin1/relocation'
+    # odom_world:         '/odom_world'
+    cmd_vel:              '/t0x0101_'
+    # cmd_vel:            '/cmd_vel'
     tracker_direction:    '/direction'
     target_yaw_deg:       '/target_yaw_deg'
     suspension_state:     '/current_state'
