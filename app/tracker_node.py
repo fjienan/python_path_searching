@@ -26,6 +26,10 @@ from core.pid_controller import PIDController
 from robot_pose.transformer import PoseTransformerQuat
 from core.transform_utils import yaw_from_quaternion
 
+from rclpy.action import ActionClient
+
+from bt_state_interfaces.action import SwitchNavigationState
+
 
 class TrackerNode(Node):
 
@@ -55,6 +59,9 @@ class TrackerNode(Node):
         self.declare_parameter('tracker_direction',  '/direction')
         self.declare_parameter('target_yaw_deg',      '/target_yaw_deg')
         self.declare_parameter('suspension_state', '/current_state')
+        self.declare_parameter('suspension_state_pub', '/current_state')
+        self.declare_parameter('suspension_control', '/t0x0102_action')
+        self.declare_parameter('fetch_done', '/t0x0103_')
         self.declare_parameter('can_do', '/can_do')
 
         # --- PID ---
@@ -98,6 +105,11 @@ class TrackerNode(Node):
         self.state_switched = False
         
         self.suspension_state = 0
+        self.navigation_state_client = ActionClient(
+            self,
+            SwitchNavigationState,
+            '/switch_navigation_state',
+        )
 
         self._init_pids()
         self._init_subscribers()
@@ -127,16 +139,23 @@ class TrackerNode(Node):
         self.path_sub   = self.create_subscription(String,    self._p('planning_path', '/planning/path'), self._path_callback,  qos)
         self.odom_sub   = self.create_subscription(PoseStamped, self._p('odom_world',   '/odom_world'),   self._odom_callback,   10)
         self.can_go_sub = self.create_subscription(Bool,     self._p('can_go',       '/can_go'),       self._can_go_callback, 10)
-        self.suspension_state = self.create_subscription(Int32, self._p('suspension_state', '/current_state'), self._suspension_state_callback, 10)
+        self.fetch_down_sub = self.create_subscription(Float32MultiArray, self._p('fetch_done', '/t0x0103_'), self._fetch_done_callback, 10)
+        self.suspension_state_sub = self.create_subscription(Int32, self._p('suspension_state', '/current_state'), self._suspension_state_callback, 10)
 
     def _init_publishers(self):
         self.cmd_pub = self.create_publisher(Float32MultiArray, self._p('cmd_vel', '/t0x0101'), 10)
         self.dir_pub = self.create_publisher(Int32,    self._p('tracker_direction',  '/direction'),         10)
         self.yaw_pub = self.create_publisher(Float32,  self._p('target_yaw_deg',    '/target_yaw_deg'),    10)
         self.initPos_pub = self.create_publisher(Float32MultiArray, self._p('initial_pose', '/initial_pose'), 10)
-        self.suspension_state_pub = self.create_publisher(Int32, self._p('suspension_state', '/current_state'), 10)
-        self.can_do_pub = self.create_publisher(Int32, self._p('can_do', '/can_do'), 10)
+        self.suspension_state_pub = self.create_publisher(Int32, self._p('suspension_state_pub', '/target_state'), 10)
+        self.suspension_control_pub = self.create_publisher(Float32MultiArray, self._p('suspension_control', '/t0x0102_action'), 10)
+        self.can_do_pub = self.create_publisher(Float32MultiArray, self._p('can_do', '/can_do'), 10)
 
+    def _fetch_done_callback(self, msg):
+        if abs(msg.data[0]+1)<1e-6:
+            self.get_logger().info(f'_fetch_done_callback: fetch done signal received, can_do=1')
+            self.can_go = True
+    
     def _suspension_state_callback(self, msg):
         self.suspension_state = msg.data
 
@@ -318,19 +337,13 @@ class TrackerNode(Node):
                 self.get_logger().info(
                     f'MOVE: roughly arrived! idx={self.current_target_index}/'
                 )
-                if int(target[3]) != 0:
-                    self.state = self.ADJ
-                    f'{len(self.current_path)}, entering ADJ to precisely align.'
-                else:
-                    if not self._move_to_next_target():
-                        self._stop()
-                        self.have_path = False
-                        self.get_logger().info('MOVE: all done, stopped')
+                self.state = self.ADJ
+                self.get_logger().info(f'{len(self.current_path)}, entering ADJ to precisely align.')
                 return       
             
             # 未到终点，进行修正，将位置修正与角度修正分开处理
             vel_forward,vel_side,vel_angle = 0,0,0
-            if abs(angle_error) >= self.angle_threshold and self.suspension_state in [0,14,21]:
+            if abs(angle_error) >= self.angle_threshold and self.suspension_state in [-1,0,14,21]:
                 vel_angle = self.pid_angle.compute(angle_error, dt)
                 if vel_angle > 0: vel_angle = max(0.15, min(self._p('max_angular'), vel_angle))
                 elif vel_angle < 0: vel_angle = min(-0.15, max(-self._p('max_angular'), vel_angle))
@@ -390,15 +403,29 @@ class TrackerNode(Node):
                       abs(angle_error) < self.angle_precise_threshold
             if arrived:
                 self.get_logger().info(
-                    f'ADJ: precisely arrived! idx={self.current_target_index}/'
-                    f'{len(self.current_path)}, entering FETCH'
+                    f'ADJ: precisely aligned! idx={self.current_target_index}/'
                 )
-                self.state = self.FETCH
-                return          
+                if int(target[3]) != 0:
+                    self.state = self.FETCH
+                    self.get_logger().info(f'{len(self.current_path)},  entering FETCH')
+                else:
+                    if not self._move_to_next_target():
+                        self._stop()
+                        self.have_path = False
+                        goal = SwitchNavigationState.Goal()
+                        goal.target_state = 'state_b'
+
+                        if not self.navigation_state_client.wait_for_server(timeout_sec=3.0):
+                            self.get_logger().error('state_manager action server not available')
+                            return
+
+                        future = self.navigation_state_client.send_goal_async(goal)
+                        self.get_logger().info('ADJ: all done, stopped')
+                return  
             
             # 未到终点，进行修正，将位置修正与角度修正分开处理
             vel_forward,vel_side,vel_angle = 0,0,0
-            if abs(angle_error) >= self.angle_precise_threshold and self.suspension_state in [0,14,21]:
+            if abs(angle_error) >= self.angle_precise_threshold and self.suspension_state in [-1,0,14,21]:
                 vel_angle = self.pid_adj_angle.compute(angle_error, dt)
                 if vel_angle > 0: vel_angle = max(0.15, min(self._p('max_adj_angular'), vel_angle))
                 elif vel_angle < 0: vel_angle = min(-0.15, max(-self._p('max_adj_angular'), vel_angle))
@@ -436,24 +463,26 @@ class TrackerNode(Node):
             
             # 读取当前参数
             self._read_target_yaw()
-            dx   = target[0] - self.current_pos[0] +self.reserved_length*math.cos(self.target_yaw)
-            dy   = target[1] - self.current_pos[1] +self.reserved_length*math.sin(self.target_yaw)
+            dx   = target[0] - self.current_pos[0] +2*self.reserved_length*math.cos(self.target_yaw)
+            dy   = target[1] - self.current_pos[1] +2*self.reserved_length*math.sin(self.target_yaw)
             angle_error = self._normalize_angle(self.target_yaw - self.current_yaw)
             
             # 终止条件检测
             arrived = abs(dx) < self.arrive_precise_threshold and \
                       abs(dy) < self.arrive_precise_threshold
             if arrived:
-                self.can_do_pub.publish(Int32(data=int(target[3])))
                 self.get_logger().info(
                     f'FETCH: can_do={target[3]} sent! idx={self.current_target_index}/'
-                    f'{len(self.current_path)}, entering RET '
+                    f'{len(self.current_path)}, entering RET, waiting for can_go=True to return'
                 )
                 self.state = self.RET
                 self.can_go = False
                 return         
 
             self.suspension_state_pub.publish(Int32(data=-1))
+            if target[3] == 200: self.suspension_control_pub.publish(Float32MultiArray(data=[175.0, 175.0, 175.0, 175.0]))
+            elif target[3] == 400: self.suspension_control_pub.publish(Float32MultiArray(data=[375.0, 375.0, 375.0, 375.0]))
+
             # 未到终点，进行修正，将位置修正与角度修正分开处理
             vel_forward,vel_side,vel_angle = 0,0,0
             
@@ -487,6 +516,9 @@ class TrackerNode(Node):
         
         elif self.state == self.RET:
             if not self.can_go:
+                self.can_do_pub.publish(Float32MultiArray(data=[1.0,float(target[3]),0.0,0.0,0.0,0.0,0.0,0.0]))
+                if target[3] == 200: self.suspension_control_pub.publish(Float32MultiArray(data=[175.0, 175.0, 175.0, 175.0]))
+                elif target[3] == 400: self.suspension_control_pub.publish(Float32MultiArray(data=[375.0, 375.0, 375.0, 375.0]))
                 self._publish_cmd(0, 0, 0)
                 return
             # 读取当前参数
@@ -499,7 +531,8 @@ class TrackerNode(Node):
             arrived = abs(dx) < self.arrive_precise_threshold and \
                       abs(dy) < self.arrive_precise_threshold
             if arrived:
-                self.suspension_state_pub.publish(Int32(data=17))
+                self.suspension_control_pub.publish(Float32MultiArray(data=[30.0, 30.0, 30.0, 30.0]))
+                self.suspension_state_pub.publish(Int32(data=0))
                 self.get_logger().info(
                     f'RET: returned! idx={self.current_target_index}/'
                     f'{len(self.current_path)}, calling _move_to_next_target '
@@ -507,11 +540,22 @@ class TrackerNode(Node):
                 if not self._move_to_next_target():
                     self._stop()
                     self.have_path = False
+                    goal = SwitchNavigationState.Goal()
+                    goal.target_state = 'state_b'
+
+                    if not self.navigation_state_client.wait_for_server(timeout_sec=3.0):
+                        self.get_logger().error('state_manager action server not available')
+                        return
+
+                    future = self.navigation_state_client.send_goal_async(goal)
                     self.get_logger().info('RET: all done, stopped')
                 return         
 
 
             self.suspension_state_pub.publish(Int32(data=-1))
+            if target[3] == 200: self.suspension_control_pub.publish(Float32MultiArray(data=[175.0, 175.0, 175.0, 175.0]))
+            elif target[3] == 400: self.suspension_control_pub.publish(Float32MultiArray(data=[375.0, 375.0, 375.0, 375.0]))
+            
             # 未到终点，进行修正，将位置修正与角度修正分开处理
             vel_forward,vel_side,vel_angle = 0,0,0
             
@@ -583,7 +627,7 @@ class TrackerNode(Node):
             
             # 未到终点，进行修正，将位置修正与角度修正分开处理
             vel_x,vel_y,vel_angle = 0,0,0
-            if abs(angle_error) >= self.angle_threshold and self.suspension_state in [0,14,21]:
+            if abs(angle_error) >= self.angle_threshold and self.suspension_state in [-1,0,14,21]:
                 vel_angle = self.pid_angle.compute(angle_error, dt)
                 if vel_angle > 0: vel_angle = max(0.15, min(self._p('max_angular'), vel_angle))
                 elif vel_angle < 0: vel_angle = min(-0.15, max(-self._p('max_angular'), vel_angle))
@@ -636,7 +680,7 @@ class TrackerNode(Node):
             
             # 未到终点，进行修正，将位置修正与角度修正分开处理
             vel_x,vel_y,vel_angle = 0,0,0
-            if abs(angle_error) >= self.angle_precise_threshold and self.suspension_state in [0,14,21]:
+            if abs(angle_error) >= self.angle_precise_threshold and self.suspension_state in [-1,0,14,21]:
                 vel_angle = self.pid_adj_angle.compute(angle_error, dt)
                 if vel_angle > 0: vel_angle = max(0.15, min(self._p('max_adj_angular'), vel_angle))
                 elif vel_angle < 0: vel_angle = min(-0.15, max(-self._p('max_adj_angular'), vel_angle))

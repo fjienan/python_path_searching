@@ -89,6 +89,7 @@ class DFSPlannerNode(Node):
 
         kfs_topic = self.declare_parameter('kfs_grid_data', '/kfs_grid_data').value
         path_topic = self.declare_parameter('planning_path', '/planning/path').value
+        path_rviz_topic = self.declare_parameter('path_on_rviz', '/path_on_rviz').value
 
         qos_profile = QoSProfile(
             reliability=QoSReliabilityPolicy.RELIABLE,
@@ -110,6 +111,7 @@ class DFSPlannerNode(Node):
             durability=QoSDurabilityPolicy.TRANSIENT_LOCAL
         )
         self.path_pub = self.create_publisher(String, path_topic, path_qos)
+        self.path_rviz_pub = self.create_publisher(Path, path_rviz_topic, path_qos)
 
         self.get_logger().info('DFS Planner Node started (Simplified)')
 
@@ -181,23 +183,33 @@ class DFSPlannerNode(Node):
             self.publish_path(self.path[0])
     
     def delete_path(self):
-        """删除旧路径（发布一个空的JSON路径）"""
+        """删除旧路径（发布一个空的JSON路径和RViz Path）"""
         msg = String()
         msg.data = json.dumps({"points": []})
         self.path_pub.publish(msg)
 
+        path_msg = Path()
+        path_msg.header.frame_id = 'map'
+        path_msg.header.stamp = self.get_clock().now().to_msg()
+        self.path_rviz_pub.publish(path_msg)
+
     def publish_path(self, steps):
-        """发布路径数据（JSON打包版）"""
+        """发布路径数据（JSON打包版和RViz Path版）"""
         self.delete_path()
 
         data = {
             "points": []
         }
 
+        path_msg = Path()
+        path_msg.header.frame_id = 'map'
+        path_msg.header.stamp = self.get_clock().now().to_msg()
+
         if not steps:
             msg = String()
             msg.data = json.dumps(data)
             self.path_pub.publish(msg)
+            self.path_rviz_pub.publish(path_msg)
             return
 
         for step in steps:
@@ -211,10 +223,20 @@ class DFSPlannerNode(Node):
 
             data["points"].append(point)
 
+            pose = PoseStamped()
+            pose.header.frame_id = 'map'
+            pose.header.stamp = path_msg.header.stamp
+            pose.pose.position.x = float(step.x)
+            pose.pose.position.y = float(step.y)
+            pose.pose.orientation.w = math.cos(float(step.yaw) * 0.5)
+            pose.pose.orientation.z = math.sin(float(step.yaw) * 0.5)
+            path_msg.poses.append(pose)
+
         msg = String()
         msg.data = json.dumps(data)
 
         self.path_pub.publish(msg)
+        self.path_rviz_pub.publish(path_msg)
 
         self.get_logger().info(
             f'Published {len(data["points"])} path points'

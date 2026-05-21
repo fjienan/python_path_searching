@@ -31,7 +31,7 @@
     angle_threshold:   0.05     # 判定角度对齐的阈值 (rad)
     arrive_precise_threshold:  0.01      # 判定到达目标的距离阈值 (m)
     angle_precise_threshold:   0.02     # 判定角度对齐的阈值 (rad)
-    reserved_length:  0.15
+    reserved_length:  0.10
 
     # ---------- PID ----------
     kp_angle: 2.5
@@ -57,6 +57,7 @@
     # -------------------- Topics --------------------
     kfs_grid_data:        '/kfs_grid_data'
     planning_path:        '/planning/path'
+    path_on_rviz:         '/path_on_rviz'
     can_go:               '/can_go'
     planning_direction:   '/planning/direction'
     planning_trigger:     '/task/trigger'
@@ -67,7 +68,11 @@
     tracker_direction:    '/direction'
     target_yaw_deg:       '/target_yaw_deg'
     suspension_state:     '/current_state'
+    suspension_state_pub:     '/target_state'
+    suspension_control:   '/t0x0102_action'
+    fetch_done:           'r0x0202'
     initial_pose:       '/start_pose'
+    can_do:            '/t0x0103_'
 
     # -------------------- Odom Simulator (仿真模式) ----------
     odom_frame:    'map'

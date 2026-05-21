@@ -27,7 +27,6 @@ setup(
             'dfs_planner_node = app.dfs_planner_node:main',
             'tracker_node = app.tracker_node:main',
             'odom_simulator = app.odom_simulator:main',
-            'path_decision_node = app.path_decision_node:main',
         ],
     },
 )
