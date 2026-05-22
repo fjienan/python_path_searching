@@ -126,8 +126,10 @@ class TrackerNode(Node):
     def _init_pids(self):
         self.pid_angle = PIDController(self._p('kp_angle'), self._p('ki_angle'), self._p('kd_angle'), self._p('max_angular'))
         self.pid_dist  = PIDController(self._p('kp_dist'),  self._p('ki_dist'),  self._p('kd_dist'),  self._p('max_vel'))
+        self.pid_side  = PIDController(self._p('kp_dist'),  self._p('ki_dist'),  self._p('kd_dist'),  self._p('max_vel'))
         self.pid_adj_angle = PIDController(self._p('kp_adj_angle'), self._p('ki_adj_angle'), self._p('kd_adj_angle'), self._p('max_adj_angular'))
         self.pid_adj_dist  = PIDController(self._p('kp_adj_dist'),  self._p('ki_adj_dist'),  self._p('kd_adj_dist'),  self._p('max_adj_vel'))
+        self.pid_adj_side  = PIDController(self._p('kp_adj_dist'),  self._p('ki_adj_dist'),  self._p('kd_adj_dist'),  self._p('max_adj_vel'))
         
     def _init_subscribers(self):
         qos = QoSProfile(
@@ -231,7 +233,7 @@ class TrackerNode(Node):
         self.target_yaw = self._normalize_angle(self.current_path[self.current_target_index]["yaw"])
 
     def _reset_pids(self):
-        self.pid_angle.reset(); self.pid_dist.reset()
+        self.pid_angle.reset(); self.pid_dist.reset(); self.pid_side.reset()
 
     def _publish_direction(self):
         if self._p("motion_type")=="unidirectional":
@@ -364,7 +366,7 @@ class TrackerNode(Node):
             else: vel_forward = 0.0
             
             # - 侧向
-            vel_side = self.pid_dist.compute(dis_side, dt)
+            vel_side = self.pid_side.compute(dis_side, dt)
             if abs(dis_side) >= self.arrive_threshold:
                 if vel_side > 0: vel_side = max(0.15, min(self._p('max_vel'), vel_side))
                 elif vel_side < 0: vel_side = min(-0.15, max(-self._p('max_vel'), vel_side))
@@ -445,7 +447,7 @@ class TrackerNode(Node):
             else: vel_forward = 0.0
             
             # - 侧向
-            vel_side = self.pid_adj_dist.compute(dis_side, dt)
+            vel_side = self.pid_adj_side.compute(dis_side, dt)
             if abs(dis_side) >= self.arrive_precise_threshold:
                 if vel_side > 0: vel_side = max(0.15, min(self._p('max_adj_vel'), vel_side))
                 elif vel_side < 0: vel_side = min(-0.15, max(-self._p('max_adj_vel'), vel_side))
@@ -501,7 +503,7 @@ class TrackerNode(Node):
             else: vel_forward = 0.0
             
             # - 侧向
-            vel_side = self.pid_adj_dist.compute(dis_side, dt)
+            vel_side = self.pid_adj_side.compute(dis_side, dt)
             if abs(dis_side) >= self.arrive_precise_threshold:
                 if vel_side > 0: vel_side = max(0.15, min(self._p('max_adj_vel'), vel_side))
                 elif vel_side < 0: vel_side = min(-0.15, max(-self._p('max_adj_vel'), vel_side))
@@ -574,7 +576,7 @@ class TrackerNode(Node):
             else: vel_forward = 0.0
             
             # - 侧向
-            vel_side = self.pid_adj_dist.compute(dis_side, dt)
+            vel_side = self.pid_adj_side.compute(dis_side, dt)
             if abs(dis_side) >= self.arrive_precise_threshold:
                 if vel_side > 0: vel_side = max(0.15, min(self._p('max_adj_vel'), vel_side))
                 elif vel_side < 0: vel_side = min(-0.15, max(-self._p('max_adj_vel'), vel_side))
@@ -641,7 +643,7 @@ class TrackerNode(Node):
             else: vel_x = 0.0
                 
             # - y方向
-            vel_y = self.pid_dist.compute(dy, dt)
+            vel_y = self.pid_side.compute(dy, dt)
             if abs(dy) >= self.arrive_threshold:
                 if vel_y > 0: vel_y = max(0.15, min(self._p('max_vel'), vel_y))
                 elif vel_y < 0: vel_y = min(-0.15, max(-self._p('max_vel'), vel_y))
@@ -694,7 +696,7 @@ class TrackerNode(Node):
             else: vel_x = 0.0
                 
             # - y方向
-            vel_y = self.pid_adj_dist.compute(dy, dt)
+            vel_y = self.pid_adj_side.compute(dy, dt)
             if abs(dy) >= self.arrive_precise_threshold:
                 if vel_y > 0: vel_y = max(0.15, min(self._p('max_adj_vel'), vel_y))
                 elif vel_y < 0: vel_y = min(-0.15, max(-self._p('max_adj_vel'), vel_y))

@@ -11,7 +11,7 @@
     # -------------------- 场地网格 --------------------
     # 'red' 或 'blue'；蓝队时所有 Y 坐标对 X 轴取反
     team:              'blue'
-    map_origin:        [0.6, -0.6, 0.0]
+    map_origin:        [0.6, -1.8, 0.0]
     grid_rows:         4
     grid_cols:         3
     grid_resolution:   1.2
