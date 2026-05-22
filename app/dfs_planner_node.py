@@ -104,7 +104,12 @@ class DFSPlannerNode(Node):
         self.kfs_data_sub = self.create_subscription(
             String, kfs_topic, self.kfs_data_callback, qos_profile
         )
-        self.initial_pose_sub = self.create_subscription(Float32MultiArray, '/start_pose', self._initial_pose_callback, 10)
+
+        # 从网格入口计算初始位置（不再依赖 relocation）
+        entry_x, entry_y = self.grid_converter.grid_to_map(self.START_ROW, self.START_COL)
+        self.initial_pos_x = entry_x
+        self.initial_pos_y = entry_y
+        self.get_logger().info(f'Grid entry position: x={entry_x:.3f}, y={entry_y:.3f} (from start_row={self.START_ROW}, start_col={self.START_COL})')
         
         # Path 发布器
         path_qos = QoSProfile(
@@ -139,22 +144,6 @@ class DFSPlannerNode(Node):
         except Exception as e:
             self.get_logger().error(f'Error processing kfs_data: {e}')
     
-    def _initial_pose_callback(self, msg):
-        """处理初始位姿消息"""
-        try:
-            data = msg.data
-            if len(data) != 2:
-                self.get_logger().warn(f'Invalid initial pose data: {data}')
-                return
-            if self.initial_pos_x is not None and self.initial_pos_y is not None: return
-            self.initial_pos_x, self.initial_pos_y = float(data[0]), float(data[1])
-            self.get_logger().info(f'Updated initial pose: x={self.initial_pos_x}, y={self.initial_pos_y}')
-            
-            if self.planner is None: self._try_plan_path()
-            
-        except Exception as e:
-            self.get_logger().error(f'Error processing initial pose: {e}')
-
     def _try_plan_path(self):
         """尝试初始化规划器并开始DFS路径规划，需要确保initial_pose和kfs_data都已收到"""
         if self.initial_pos_x is None or self.initial_pos_y is None:

@@ -47,6 +47,15 @@ def generate_launch_description():
             parameters=[params_file],
         ),
 
+        # === RViz 可视化 ===
+        Node(
+            package='rviz2',
+            executable='rviz2',
+            name='path_rviz',
+            output='screen',
+            arguments=['-d', f'{pkg_share}/config/path_tracking.rviz'],
+        ),
+
         # === 里程计仿真（仅仿真模式启用）===
         # 真实 SLAM 时注释掉本节点
         # Node(
