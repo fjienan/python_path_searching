@@ -30,19 +30,22 @@ class GridConverter:
         grid_rows: int,
         grid_cols: int,
         map_origin: Tuple[float, float, float] = (0.0, 0.0, 0.0),
-        grid_resolution: float = 1.0
+        grid_resolution: float = 1.0,
+        mirror_y: bool = False,
     ):
         """
         Args:
             grid_rows: 网格行数
             grid_cols: 网格列数
-            map_origin: 地图原点坐标 [x, y, theta]
+            map_origin: 地图原点坐标 [x, y, theta]（红队坐标）
             grid_resolution: 网格分辨率（米/单元格）
+            mirror_y: 蓝队模式，所有 Y 坐标对 X 轴取反
         """
         self.grid_rows = grid_rows
         self.grid_cols = grid_cols
         self.map_origin = map_origin
         self.grid_resolution = grid_resolution
+        self.mirror_y = mirror_y
 
     def map_to_grid(self, x: float, y: float) -> Tuple[int, int]:
         """
@@ -54,6 +57,8 @@ class GridConverter:
         Returns:
             tuple: (row, col) grid索引
         """
+        if self.mirror_y:
+            y = -y
         row = floor((x - self.map_origin[0]) / self.grid_resolution)
         col = floor((y - self.map_origin[1]) / self.grid_resolution)
         return row, col
@@ -70,6 +75,8 @@ class GridConverter:
         """
         x = self.map_origin[0] + row * self.grid_resolution + 0.5 * self.grid_resolution
         y = self.map_origin[1] + col * self.grid_resolution + 0.5 * self.grid_resolution
+        if self.mirror_y:
+            y = -y
         return x, y
 
     def is_in_grid(self, row: int, col: int) -> bool:

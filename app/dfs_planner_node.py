@@ -57,16 +57,19 @@ class DFSPlannerNode(Node):
         # AStar中的参数注入与GridConverter初始化
         self.declare_parameter('map_origin', [3.2, 1.2, 0.0])
         self.declare_parameter('grid_resolution', 1.2)
-        
+        self.declare_parameter('team', 'red')
+
         map_origin_raw = self.get_parameter('map_origin').value
         self.MAP_ORIGIN = tuple(map_origin_raw)
         self.GRID_RESOLUTION = self.get_parameter('grid_resolution').value
+        mirror_y = self.get_parameter('team').value.strip().lower() == 'blue'
 
         self.grid_converter = GridConverter(
             grid_rows=self.GRID_ROWS,
             grid_cols=self.GRID_COLS,
             map_origin=self.MAP_ORIGIN,
-            grid_resolution=self.GRID_RESOLUTION
+            grid_resolution=self.GRID_RESOLUTION,
+            mirror_y=mirror_y,
         )
 
         # 初始化外部的DFS规划器

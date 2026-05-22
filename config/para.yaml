@@ -9,6 +9,8 @@
   ros__parameters:
 
     # -------------------- 场地网格 --------------------
+    # 'red' 或 'blue'；蓝队时所有 Y 坐标对 X 轴取反
+    team:              'red'
     map_origin:        [0.6, -0.6, 0.0]
     grid_rows:         4
     grid_cols:         3
